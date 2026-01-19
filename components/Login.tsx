@@ -46,7 +46,7 @@ const Login: React.FC<LoginProps> = () => {
   const handleBiometricLogin = async () => {
     try {
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Anmelden mit Face ID',
+        promptMessage: 'Anmelden mit Biometrie',
         cancelLabel: 'Abbrechen',
         disableDeviceFallback: false,
       });
@@ -60,7 +60,7 @@ const Login: React.FC<LoginProps> = () => {
         }
       }
     } catch (err: any) {
-      setError('Face ID fehlgeschlagen');
+      setError('Biometrie fehlgeschlagen');
       setLoading(false);
     }
   };
@@ -80,11 +80,11 @@ const Login: React.FC<LoginProps> = () => {
       } else {
         await supabaseService.signIn(email, password);
 
-        // After successful login, offer to enable Face ID
+        // After successful login, offer to enable biometric login
         if (biometricAvailable && !hasStoredCredentials) {
           Alert.alert(
-            'Face ID aktivieren?',
-            'Möchtest du dich zukünftig mit Face ID anmelden?',
+            'Biometrie aktivieren?',
+            'Möchtest du dich zukünftig mit Fingerabdruck anmelden?',
             [
               { text: 'Nein', style: 'cancel' },
               {
@@ -125,8 +125,8 @@ const Login: React.FC<LoginProps> = () => {
               onPress={handleBiometricLogin}
               disabled={loading}
             >
-              <Icon name="scan-outline" size={28} color="#2563eb" />
-              <Text style={styles.faceIdButtonText}>Mit Face ID anmelden</Text>
+              <Icon name="finger-print-outline" size={28} color="#2563eb" />
+              <Text style={styles.faceIdButtonText}>Mit Biometrie anmelden</Text>
             </TouchableOpacity>
           )}
 

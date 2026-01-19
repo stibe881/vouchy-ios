@@ -23,6 +23,10 @@
       "ios": {
         "appleId": "stefan@gross-ict.ch",
         "ascAppId": "6739889889"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./pc-api-key.json",
+        "track": "internal"
       }
     }
   }
