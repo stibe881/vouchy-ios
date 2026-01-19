@@ -1,6 +1,7 @@
 
 import { createClient } from '@supabase/supabase-js';
-import { Voucher, Family, User, AppNotification } from '../types';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Voucher, Family, User, AppNotification, FamilyInvite } from '../types';
 
 const supabaseUrl = 'https://iopejcjkmuievlaclecn.supabase.co/';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlvcGVqY2prbXVpZXZsYWNsZWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyMzU5MTMsImV4cCI6MjA4MTgxMTkxM30.JX9jp8tGCZ9oDMYfTFt3KF6h0P5UxzaTPUERgtV7G3Y';
@@ -92,7 +93,35 @@ export const supabaseService = {
     return data[0] as Voucher;
   },
 
-  deleteVoucher: async (voucherId: string) => {
+  deleteVoucher: async (voucherId: string, imageUrl?: string | null, imageUrl2?: string | null) => {
+    // Delete images from storage if they exist
+    const deleteImage = async (url: string | null | undefined) => {
+      if (!url) return;
+      try {
+        // Extract filename from public URL
+        // URL format: https://xxx.supabase.co/storage/v1/object/public/vouchers/voucher-123.jpg
+        const urlParts = url.split('/');
+        const fileName = urlParts[urlParts.length - 1]?.split('?')[0]; // Remove query params if any
+
+        if (fileName && fileName.startsWith('voucher-')) {
+          console.log('Deleting image from storage:', fileName);
+          const { error } = await supabase.storage.from('vouchers').remove([fileName]);
+          if (error) {
+            console.error('Error deleting image:', error);
+          } else {
+            console.log('Image deleted successfully:', fileName);
+          }
+        } else {
+          console.log('Not a storage image, skipping:', url);
+        }
+      } catch (e) {
+        console.error('Error deleting image:', e);
+      }
+    };
+
+    await deleteImage(imageUrl);
+    await deleteImage(imageUrl2);
+
     const { error } = await supabase.from('vouchers').delete().eq('id', voucherId);
     if (error) throw error;
   },
@@ -165,30 +194,172 @@ export const supabaseService = {
     if (error) throw error;
   },
 
-  uploadVoucherImage: async (uriOrBase64: string, fileName: string, mimeType: string) => {
+  uploadVoucherImage: async (uri: string, fileName: string, mimeType: string) => {
     try {
-      let blob;
-      // If it's a URI (file:// or content://), fetch it as a blob
-      if (uriOrBase64.startsWith('file://') || uriOrBase64.startsWith('content://') || uriOrBase64.startsWith('http')) {
-        const response = await fetch(uriOrBase64);
-        blob = await response.blob();
-      } else {
-        // Fallback for base64 string (less efficient on native but kept for compatibility logic)
-        // Note: atob is not available in RN without polyfill. 
-        // Assuming this branch might not be hit if we pass URI, or we need 'base-64' package.
-        // Better to rely on URI upload.
-        return null;
+      console.log('Upload attempt:', { uri: uri.substring(0, 50), fileName });
+
+      // Use expo-file-system to properly read the file
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: 'base64' as any,
+      });
+      console.log('Base64 read, length:', base64.length);
+
+      // Convert base64 to Uint8Array
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
       }
 
-      const filePath = `voucher-${Date.now()}.${fileName.split('.').pop() || 'jpg'}`;
-      const { error: uploadError } = await supabase.storage.from('vouchers').upload(filePath, blob);
+      const filePath = `voucher-${Date.now()}.jpg`;
+      console.log('Uploading to path:', filePath);
 
-      if (uploadError) throw uploadError;
+      const { error: uploadError } = await supabase.storage
+        .from('vouchers')
+        .upload(filePath, bytes, {
+          contentType: mimeType,
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw uploadError;
+      }
+
       const { data } = supabase.storage.from('vouchers').getPublicUrl(filePath);
+      console.log('Upload success, public URL:', data.publicUrl);
       return data.publicUrl;
     } catch (e) {
       console.error("Storage upload error", e);
       return null;
     }
+  },
+
+  // ===== FAMILY INVITATIONS =====
+
+  sendInviteEmail: async (inviteeEmail: string, inviterName: string, familyName: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('send-invite-email', {
+        body: { inviteeEmail, inviterName, familyName }
+      });
+      if (error) console.error('Email send error:', error);
+      return data;
+    } catch (e) {
+      console.error('Failed to send invite email:', e);
+    }
+  },
+
+  createInvite: async (familyId: string, inviterId: string, inviteeEmail: string, inviterName?: string, familyName?: string) => {
+    const { data, error } = await supabase
+      .from('family_invites')
+      .insert([{
+        family_id: familyId,
+        inviter_id: inviterId,
+        invitee_email: inviteeEmail.toLowerCase().trim(),
+        status: 'pending'
+      }])
+      .select()
+      .single();
+    if (error) throw error;
+
+    // Send email notification to invitee
+    if (familyName) {
+      await supabaseService.sendInviteEmail(inviteeEmail, inviterName || 'Jemand', familyName);
+    }
+
+    return data as FamilyInvite;
+  },
+
+  getPendingInvitesForUser: async (userEmail: string): Promise<FamilyInvite[]> => {
+    const { data, error } = await supabase
+      .from('family_invites')
+      .select(`
+        *,
+        families:family_id (name),
+        profiles:inviter_id (name)
+      `)
+      .eq('invitee_email', userEmail.toLowerCase())
+      .eq('status', 'pending');
+
+    if (error) {
+      console.error('Error fetching invites:', error);
+      return [];
+    }
+
+    return (data || []).map((invite: any) => ({
+      ...invite,
+      family_name: invite.families?.name,
+      inviter_name: invite.profiles?.name
+    })) as FamilyInvite[];
+  },
+
+  getSentInvitesForFamily: async (familyId: string): Promise<FamilyInvite[]> => {
+    const { data, error } = await supabase
+      .from('family_invites')
+      .select('*')
+      .eq('family_id', familyId)
+      .eq('status', 'pending');
+
+    if (error) {
+      console.error('Error fetching sent invites:', error);
+      return [];
+    }
+
+    return (data || []) as FamilyInvite[];
+  },
+
+  respondToInvite: async (inviteId: string, response: 'accepted' | 'rejected'): Promise<FamilyInvite> => {
+    const { data, error } = await supabase
+      .from('family_invites')
+      .update({
+        status: response,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', inviteId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data as FamilyInvite;
+  },
+
+  getInviterPushToken: async (inviterId: string): Promise<string | null> => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('push_token')
+      .eq('id', inviterId)
+      .single();
+
+    if (error || !data) return null;
+    return data.push_token;
+  },
+
+  addMemberToFamily: async (familyId: string, userEmail: string, userName: string) => {
+    // Get the family
+    const { data: family, error: fetchError } = await supabase
+      .from('families')
+      .select('*')
+      .eq('id', familyId)
+      .single();
+
+    if (fetchError || !family) throw fetchError || new Error('Family not found');
+
+    const newMember = {
+      id: Math.random().toString(36).substr(2, 9),
+      email: userEmail.toLowerCase(),
+      name: userName || userEmail.split('@')[0]
+    };
+
+    const updatedMembers = [...(family.members || []), newMember];
+
+    const { error: updateError } = await supabase
+      .from('families')
+      .update({
+        members: updatedMembers,
+        member_count: updatedMembers.length + 1
+      })
+      .eq('id', familyId);
+
+    if (updateError) throw updateError;
   }
 };

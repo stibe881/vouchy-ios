@@ -46,6 +46,7 @@ export interface Voucher {
   code?: string;
   pin?: string;
   website?: string;
+  image_url_2?: string | null;
   history?: Redemption[]; // Neu: Verlauf der Einlösungen
 }
 
@@ -56,6 +57,19 @@ export interface AppNotification {
   timestamp: string;
   read: boolean;
   type: 'info' | 'success' | 'warning';
+}
+
+export interface FamilyInvite {
+  id: string;
+  family_id: string;
+  inviter_id: string;
+  invitee_email: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  created_at: string;
+  updated_at: string;
+  // Joined data
+  family_name?: string;
+  inviter_name?: string;
 }
 
 export interface AuthState {

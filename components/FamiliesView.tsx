@@ -1,37 +1,51 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Switch, ActivityIndicator, Alert, Modal } from 'react-native';
-import { Family, User, FamilyMember } from '../types';
+import { Family, User, FamilyMember, FamilyInvite } from '../types';
 import { supabaseService } from '../services/supabase';
+import { sendInviteResponseNotification } from '../services/notifications';
 import Icon from './Icon';
 
 interface FamiliesViewProps {
   families: Family[];
   user: User | null;
+  pendingInvites: FamilyInvite[];
   onUpdateUser: (user: User) => void;
   onCreateFamily: (name: string, invites: string[]) => void;
   onUpdateFamily: (family: Family) => void;
   onDeleteFamily?: (id: string) => void;
   onLogout: () => void;
   showNotification: (title: string, body: string) => void;
+  onRefreshInvites: () => void;
 }
 
-const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUser, onCreateFamily, onUpdateFamily, onDeleteFamily, onLogout, showNotification }) => {
+const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvites, onUpdateUser, onCreateFamily, onUpdateFamily, onDeleteFamily, onLogout, showNotification, onRefreshInvites }) => {
   const [newFamilyName, setNewFamilyName] = useState('');
   const [isAddingFamily, setIsAddingFamily] = useState(false);
   const [selectedFamily, setSelectedFamily] = useState<Family | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
-  
+  const [isProcessingInvite, setIsProcessingInvite] = useState<string | null>(null);
+  const [sentInvites, setSentInvites] = useState<FamilyInvite[]>([]);
+
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isChangingEmail, setIsChangingEmail] = useState(false);
   const [editName, setEditName] = useState(user?.name || '');
   const [newEmail, setNewEmail] = useState(user?.email || '');
-  
+
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [msg, setMsg] = useState<{ text: string, type: 'error' | 'success' } | null>(null);
+
+  // Load sent invites when a family is selected
+  useEffect(() => {
+    if (selectedFamily) {
+      supabaseService.getSentInvitesForFamily(selectedFamily.id).then(setSentInvites);
+    } else {
+      setSentInvites([]);
+    }
+  }, [selectedFamily]);
 
   const handleCreateFamily = () => {
     if (newFamilyName.trim()) {
@@ -41,35 +55,71 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
     }
   };
 
-  const handleAddMember = () => {
-    if (!selectedFamily || !inviteEmail.trim().includes('@')) return;
-    
-    const newMember: FamilyMember = {
-      id: Math.random().toString(36).substr(2, 9),
-      email: inviteEmail.trim().toLowerCase(),
-      name: inviteEmail.split('@')[0]
-    };
+  const handleAddMember = async () => {
+    if (!selectedFamily || !inviteEmail.trim().includes('@') || !user) return;
 
-    const updatedMembers = [...(selectedFamily.members || []), newMember];
-    const updatedFamily = { 
-      ...selectedFamily, 
-      members: updatedMembers, 
-      member_count: updatedMembers.length + 1 
-    };
-    
-    onUpdateFamily(updatedFamily);
-    setSelectedFamily(updatedFamily);
-    setInviteEmail('');
-    showNotification("Mitglied hinzugefügt", `${newMember.email} wurde eingeladen.`);
+    try {
+      await supabaseService.createInvite(
+        selectedFamily.id,
+        user.id,
+        inviteEmail.trim(),
+        user.name,           // inviter name for email
+        selectedFamily.name  // family name for email
+      );
+      // Refresh sent invites to show the new invitation
+      const invites = await supabaseService.getSentInvitesForFamily(selectedFamily.id);
+      setSentInvites(invites);
+      setInviteEmail('');
+      showNotification("Einladung gesendet", `${inviteEmail} wurde eingeladen.`);
+    } catch (error: any) {
+      Alert.alert("Fehler", error.message || "Einladung konnte nicht gesendet werden.");
+    }
+  };
+
+  const handleRespondToInvite = async (invite: FamilyInvite, response: 'accepted' | 'rejected') => {
+    if (!user) return;
+    setIsProcessingInvite(invite.id);
+
+    try {
+      await supabaseService.respondToInvite(invite.id, response);
+
+      // If accepted, add user to family
+      if (response === 'accepted') {
+        await supabaseService.addMemberToFamily(invite.family_id, user.email, user.name);
+      }
+
+      // Send push notification to inviter
+      const inviterToken = await supabaseService.getInviterPushToken(invite.inviter_id);
+      if (inviterToken) {
+        await sendInviteResponseNotification(
+          inviterToken,
+          user.name,
+          invite.family_name || 'Gruppe',
+          response
+        );
+      }
+
+      onRefreshInvites();
+      showNotification(
+        response === 'accepted' ? "Beigetreten!" : "Abgelehnt",
+        response === 'accepted'
+          ? `Du bist jetzt Mitglied von "${invite.family_name}"`
+          : `Einladung zu "${invite.family_name}" abgelehnt`
+      );
+    } catch (error: any) {
+      Alert.alert("Fehler", error.message || "Aktion fehlgeschlagen.");
+    } finally {
+      setIsProcessingInvite(null);
+    }
   };
 
   const handleRemoveMember = (memberId: string) => {
     if (!selectedFamily) return;
     const updatedMembers = (selectedFamily.members || []).filter(m => m.id !== memberId);
-    const updatedFamily = { 
-      ...selectedFamily, 
-      members: updatedMembers, 
-      member_count: updatedMembers.length + 1 
+    const updatedFamily = {
+      ...selectedFamily,
+      members: updatedMembers,
+      member_count: updatedMembers.length + 1
     };
     onUpdateFamily(updatedFamily);
     setSelectedFamily(updatedFamily);
@@ -81,9 +131,9 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
       "Bist du sicher? Alle Verknüpfungen gehen verloren.",
       [
         { text: "Abbrechen", style: "cancel" },
-        { 
-          text: "Löschen", 
-          style: "destructive", 
+        {
+          text: "Löschen",
+          style: "destructive",
           onPress: async () => {
             try {
               if (onDeleteFamily) onDeleteFamily(id);
@@ -93,7 +143,7 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
             } catch (e) {
               Alert.alert("Fehler", "Löschen fehlgeschlagen.");
             }
-          } 
+          }
         }
       ]
     );
@@ -113,7 +163,7 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
   };
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom: 120}}>
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
       <View style={styles.header}>
         <Text style={styles.title}>Einstellungen</Text>
       </View>
@@ -145,7 +195,7 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
 
       <View style={styles.section}>
         <Text style={styles.sectionHeader}>Konto & Sicherheit</Text>
-        
+
         <TouchableOpacity style={styles.settingRow} onPress={() => setIsChangingEmail(!isChangingEmail)}>
           <View style={styles.settingLeft}>
             <View style={[styles.settingIcon, { backgroundColor: '#f59e0b' }]}><Icon name="mail" size={16} color="#fff" /></View>
@@ -162,6 +212,41 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
           <Icon name={isChangingPassword ? "chevron-down-outline" : "chevron-forward-outline"} size={16} color="#d1d5db" />
         </TouchableOpacity>
       </View>
+
+      {/* Pending Invitations Section */}
+      {pendingInvites.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionHeader}>Offene Einladungen</Text>
+          {pendingInvites.map(invite => (
+            <View key={invite.id} style={styles.inviteCard}>
+              <View style={styles.inviteInfo}>
+                <Text style={styles.inviteFamily}>{invite.family_name || 'Gruppe'}</Text>
+                <Text style={styles.inviteFrom}>von {invite.inviter_name || 'Unbekannt'}</Text>
+              </View>
+              <View style={styles.inviteActions}>
+                {isProcessingInvite === invite.id ? (
+                  <ActivityIndicator size="small" color="#2563eb" />
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={styles.inviteRejectBtn}
+                      onPress={() => handleRespondToInvite(invite, 'rejected')}
+                    >
+                      <Icon name="close" size={20} color="#ef4444" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.inviteAcceptBtn}
+                      onPress={() => handleRespondToInvite(invite, 'accepted')}
+                    >
+                      <Icon name="checkmark" size={20} color="#fff" />
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
 
       <View style={styles.section}>
         <View style={styles.sectionHeaderRow}>
@@ -216,11 +301,11 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
 
             <ScrollView contentContainerStyle={styles.modalContent}>
               <Text style={styles.modalSectionLabel}>Mitglieder verwalten</Text>
-              
+
               <View style={styles.memberInputRow}>
-                <TextInput 
-                  style={[styles.input, {flex: 1, marginBottom: 0}]} 
-                  placeholder="E-Mail einladen" 
+                <TextInput
+                  style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                  placeholder="E-Mail einladen"
                   value={inviteEmail}
                   onChangeText={setInviteEmail}
                 />
@@ -236,9 +321,20 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, onUpdateUse
                 </View>
                 {(selectedFamily.members || []).map(member => (
                   <View key={member.id} style={styles.memberItem}>
-                    <View style={[styles.memberAvatar, {backgroundColor: '#f1f5f9'}]}><Text style={[styles.memberAvatarText, {color: '#64748b'}]}>{member.email[0].toUpperCase()}</Text></View>
+                    <View style={[styles.memberAvatar, { backgroundColor: '#f1f5f9' }]}><Text style={[styles.memberAvatarText, { color: '#64748b' }]}>{member.email[0].toUpperCase()}</Text></View>
                     <Text style={styles.memberName}>{member.email}</Text>
                     <TouchableOpacity onPress={() => handleRemoveMember(member.id)}><Icon name="remove-circle-outline" size={20} color="#ef4444" /></TouchableOpacity>
+                  </View>
+                ))}
+                {/* Pending invites */}
+                {sentInvites.map(invite => (
+                  <View key={invite.id} style={styles.memberItem}>
+                    <View style={[styles.memberAvatar, { backgroundColor: '#fef3c7' }]}><Text style={[styles.memberAvatarText, { color: '#d97706' }]}>{invite.invitee_email[0].toUpperCase()}</Text></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.memberName}>{invite.invitee_email}</Text>
+                      <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '600' }}>Eingeladen</Text>
+                    </View>
+                    <Icon name="time-outline" size={18} color="#d97706" />
                   </View>
                 ))}
               </View>
@@ -288,7 +384,7 @@ const styles = StyleSheet.create({
   createBox: { padding: 20, backgroundColor: '#f8fafc' },
   footer: { alignItems: 'center', marginTop: 20, paddingBottom: 40 },
   versionText: { fontSize: 12, color: '#94a3b8', fontWeight: '600' },
-  
+
   modalContainer: { flex: 1, backgroundColor: '#fff' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   modalTitle: { fontSize: 18, fontWeight: '900' },
@@ -300,7 +396,16 @@ const styles = StyleSheet.create({
   memberItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', padding: 12, borderRadius: 18 },
   memberAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563eb', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   memberAvatarText: { color: '#fff', fontWeight: '800' },
-  memberName: { flex: 1, fontSize: 15, fontWeight: '600', color: '#1e293b' }
+  memberName: { flex: 1, fontSize: 15, fontWeight: '600', color: '#1e293b' },
+
+  // Invite styles
+  inviteCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  inviteInfo: { flex: 1 },
+  inviteFamily: { fontSize: 16, fontWeight: '700', color: '#1e293b' },
+  inviteFrom: { fontSize: 13, color: '#64748b', marginTop: 2 },
+  inviteActions: { flexDirection: 'row', gap: 8 },
+  inviteRejectBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#fee2e2', justifyContent: 'center', alignItems: 'center' },
+  inviteAcceptBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#10b981', justifyContent: 'center', alignItems: 'center' }
 });
 
 export default FamiliesView;

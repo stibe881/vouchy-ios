@@ -1,13 +1,13 @@
-
 {
   "expo": {
     "name": "VoucherVault",
-    "slug": "vouchervault-ios",
+    "slug": "gutschein",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#2563eb"
     },
@@ -19,13 +19,25 @@
       "bundleIdentifier": "ch.vouchervault.app",
       "infoPlist": {
         "NSCameraUsageDescription": "Diese App benötigt Zugriff auf die Kamera, um Gutscheine zu scannen.",
-        "NSPhotoLibraryUsageDescription": "Diese App benötigt Zugriff auf deine Fotos, um gespeicherte Gutscheine hochzuladen."
+        "NSPhotoLibraryUsageDescription": "Diese App benötigt Zugriff auf deine Fotos, um gespeicherte Gutscheine hochzuladen.",
+        "NSFaceIDUsageDescription": "Diese App verwendet Face ID, um deine Gutscheine zu schützen.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "extra": {
       "eas": {
-        "projectId": "your-expo-project-id"
+        "projectId": "bdf2d798-7677-45e1-8b50-ccd7c6e0c4f6"
       }
-    }
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "sounds": []
+        }
+      ]
+    ],
+    "scheme": "vouchervault"
   }
 }

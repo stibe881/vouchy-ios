@@ -1,10 +1,18 @@
 
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Image } from 'react-native';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Image, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Voucher, Family, VoucherType } from '../types';
 import { supabaseService } from '../services/supabase';
 import Icon from './Icon';
+
+// Dynamic import to prevent crash in Expo Go
+let DocumentScanner: any = null;
+try {
+  DocumentScanner = require('react-native-document-scanner-plugin').default;
+} catch (e) {
+  console.log('DocumentScanner not available (Expo Go)');
+}
 
 interface AddVoucherProps {
   families: Family[];
@@ -26,8 +34,11 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
   const [website, setWebsite] = useState('');
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageUrl2, setImageUrl2] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
+  const [showSecondPageModal, setShowSecondPageModal] = useState(false);
+  const [pendingFirstImage, setPendingFirstImage] = useState<{ base64: string, uri: string } | null>(null);
 
   const [showScanModal, setShowScanModal] = useState(false);
   const [scannedData, setScannedData] = useState<{
@@ -39,6 +50,7 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
     expiry?: string;
     code?: string;
     pin?: string;
+    website?: string;
   } | null>(null);
 
   const formatDate = (val: string) => {
@@ -48,6 +60,19 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
     if (cleaned.length > 2) res = cleaned.substring(0, 2) + '.' + cleaned.substring(2);
     if (cleaned.length > 4) res = cleaned.substring(0, 2) + '.' + cleaned.substring(2, 4) + '.' + cleaned.substring(4);
     return res;
+  };
+
+  // Convert DD.MM.YYYY to YYYY-MM-DD for Supabase
+  const convertDateToISO = (dateStr: string): string | null => {
+    if (!dateStr || !dateStr.trim()) return null;
+    const parts = dateStr.split('.');
+    if (parts.length === 3) {
+      const [day, month, year] = parts;
+      if (day && month && year && year.length === 4) {
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      }
+    }
+    return null;
   };
 
   const handleSubmit = () => {
@@ -69,21 +94,72 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
       initial_amount: numericAmount,
       remaining_amount: numericAmount,
       currency: type === 'VALUE' ? currency : 'x',
-      expiry_date: expiry.trim() || null,
+      expiry_date: convertDateToISO(expiry),
       code: code.trim(),
       pin: pin.trim(),
       website: website.trim(),
       family_id: familyId,
       image_url: imageUrl,
+      image_url_2: imageUrl2,
       created_at: new Date().toISOString(),
       user_id: '',
       history: []
     });
   };
 
-  const pickImage = async (source: 'camera' | 'gallery') => {
+  // Document scanner function for camera (with automatic edge detection)
+  const scanDocument = async (isSecondPage: boolean = false) => {
+    // Fallback to regular camera if DocumentScanner not available
+    if (!DocumentScanner) {
+      alert('Dokumenten-Scanner nicht verfügbar. Bitte erstelle einen Development Build oder nutze die Galerie.');
+      return;
+    }
+
     try {
-      let result;
+      const result = await DocumentScanner.scanDocument({
+        croppedImageQuality: 80,
+      });
+
+      if (result?.scannedImages && result.scannedImages.length > 0) {
+        const scannedUri = result.scannedImages[0];
+
+        // Read base64 from scanned image
+        const FileSystem = require('expo-file-system/legacy');
+        const base64 = await FileSystem.readAsStringAsync(scannedUri, {
+          encoding: 'base64' as any,
+        });
+
+        if (isSecondPage && pendingFirstImage) {
+          // Process both images together
+          setShowSecondPageModal(false);
+          await processMultipleImages(pendingFirstImage.base64, base64, pendingFirstImage.uri, scannedUri);
+          setPendingFirstImage(null);
+        } else {
+          // First image - ask if there's a second page
+          setPendingFirstImage({ base64: base64, uri: scannedUri });
+          setShowSecondPageModal(true);
+        }
+      }
+    } catch (e: any) {
+      console.error("Scan error:", e);
+      // Fallback to regular camera if scanner fails (e.g., in Expo Go)
+      if (e.message?.includes('native module') || e.message?.includes('null')) {
+        alert('Dokumenten-Scanner nicht verfügbar. Bitte erstelle einen Development Build oder nutze die Galerie.');
+      } else {
+        alert("Fehler beim Scannen: " + (e.message || 'Unbekannter Fehler'));
+      }
+    }
+  };
+
+  const pickImage = async (source: 'camera' | 'gallery', isSecondPage: boolean = false) => {
+    try {
+      // Use document scanner for camera on native if available
+      if (source === 'camera' && DocumentScanner) {
+        await scanDocument(isSecondPage);
+        return;
+      }
+
+      // Fallback to regular camera or gallery picker
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -91,21 +167,23 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
         base64: true,
       };
 
-      if (source === 'camera') {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (permission.status !== 'granted') {
-          alert('Kamerazugriff erforderlich');
-          return;
-        }
-        result = await ImagePicker.launchCameraAsync(options);
-      } else {
-        result = await ImagePicker.launchImageLibraryAsync(options);
-      }
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync(options)
+        : await ImagePicker.launchImageLibraryAsync(options);
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
         if (asset.uri && asset.base64) {
-          processImage(asset.base64, asset.uri, asset.fileName || 'voucher.jpg');
+          if (isSecondPage && pendingFirstImage) {
+            // Process both images together
+            setShowSecondPageModal(false);
+            await processMultipleImages(pendingFirstImage.base64, asset.base64, pendingFirstImage.uri, asset.uri);
+            setPendingFirstImage(null);
+          } else {
+            // First image - ask if there's a second page
+            setPendingFirstImage({ base64: asset.base64, uri: asset.uri });
+            setShowSecondPageModal(true);
+          }
         }
       }
     } catch (e) {
@@ -114,17 +192,32 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
     }
   };
 
-  const processImage = async (base64: string, uri: string, fileName: string = 'voucher.jpg') => {
+  const processMultipleImages = async (base64_1: string, base64_2: string | null, uri_1: string, uri_2: string | null) => {
     setIsAnalyzing(true);
     try {
-      // Use URI for upload (more robust on Native), base64 for AI analysis
-      const uploadedUrl = await supabaseService.uploadVoucherImage(uri, fileName, 'image/jpeg');
-      if (uploadedUrl) setImageUrl(uploadedUrl);
-      else setImageUrl(uri);
+      // Upload first image
+      const uploadedUrl1 = await supabaseService.uploadVoucherImage(uri_1, 'voucher-front.jpg', 'image/jpeg');
+      if (uploadedUrl1) setImageUrl(uploadedUrl1);
+      else setImageUrl(uri_1);
 
-      // Use direct REST API to avoid environment issues with @google/genai SDK in React Native
+      // Upload second image if exists
+      if (uri_2) {
+        const uploadedUrl2 = await supabaseService.uploadVoucherImage(uri_2, 'voucher-back.jpg', 'image/jpeg');
+        if (uploadedUrl2) setImageUrl2(uploadedUrl2);
+        else setImageUrl2(uri_2);
+      }
+
+      // Build image parts for API
+      const imageParts = [
+        { inline_data: { mime_type: 'image/jpeg', data: base64_1 } }
+      ];
+      if (base64_2) {
+        imageParts.push({ inline_data: { mime_type: 'image/jpeg', data: base64_2 } });
+      }
+
+      // Use direct REST API with website extraction
       const API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${API_KEY}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -132,8 +225,32 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
         body: JSON.stringify({
           contents: [{
             parts: [
-              { text: "Extrahiere store, title, amount, currency, voucherType ('VALUE' oder 'QUANTITY'), expiryDate (Format DD.MM.YYYY), code (Gutscheinnummer) und pin. Antworte NUR im JSON Format." },
-              { inline_data: { mime_type: 'image/jpeg', data: base64 } }
+              {
+                text: `Du bist ein Experte für Gutschein-Analyse. Analysiere dieses Gutschein-Bild SEHR SORGFÄLTIG und extrahiere ALLE Informationen.
+
+WICHTIG: Suche besonders nach:
+- LANGE ZAHLENKETTEN (das ist meist der Gutschein-Code/Kartennummer)
+- Kurze 4-6 stellige Zahlen (das ist meist der PIN)
+- URLs oder Webseiten
+
+Antworte NUR mit diesem JSON-Format:
+{
+  "store": "Name des Geschäfts (z.B. Migros, Coop, IKEA)",
+  "title": "Beschreibung des Gutscheins",
+  "amount": "Betrag als Zahl ohne Währung",
+  "currency": "CHF, EUR oder USD",
+  "voucherType": "VALUE",
+  "expiryDate": "Ablaufdatum als DD.MM.YYYY oder leer",
+  "code": "DIE LÄNGSTE ZAHLENKETTE auf dem Gutschein (z.B. 1234-5678-9012-3456 oder 19-stellige Nummer)",
+  "pin": "Kurzer numerischer Code (4-6 Ziffern), oft als PIN, Sicherheitscode oder unter Rubbelfeld bezeichnet",
+  "website": "URL falls vorhanden"
+}
+
+ACHTE BESONDERS AUF:
+1. Kartennummern haben oft 12-19 Ziffern
+2. PINs haben meist 4-6 Ziffern und stehen oft unter einem Rubbelfeld
+3. Alle sichtbaren Nummern müssen erfasst werden!` },
+              ...imageParts
             ]
           }],
           generationConfig: {
@@ -148,18 +265,22 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
       let resultText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
       console.log('AI Result Text:', resultText);
 
-      const result = JSON.parse(resultText);
-      console.log('Parsed Result:', result);
+      const parsed = JSON.parse(resultText);
+      console.log('Parsed Result:', parsed);
+
+      // Handle both array and object response formats
+      const result = Array.isArray(parsed) ? parsed[0] : parsed;
 
       setScannedData({
-        title: result.title || '',
-        store: result.store || '',
-        amount: result.amount ? result.amount.toString() : '',
-        currency: (result.currency || 'CHF').toUpperCase(),
-        type: (result.voucherType as VoucherType) || 'VALUE',
-        expiry: result.expiryDate || '',
-        code: result.code || '',
-        pin: result.pin || ''
+        title: result?.title || '',
+        store: result?.store || '',
+        amount: result?.amount ? result.amount.toString() : '',
+        currency: (result?.currency || 'CHF').toUpperCase(),
+        type: (result?.voucherType as VoucherType) || 'VALUE',
+        expiry: result?.expiryDate || '',
+        code: result?.code || '',
+        pin: result?.pin || '',
+        website: result?.website || ''
       });
       setShowScanModal(true);
 
@@ -168,6 +289,14 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
       alert("KI Scan: Daten konnten nicht automatisch erkannt werden.");
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const processSingleImage = async () => {
+    if (pendingFirstImage) {
+      setShowSecondPageModal(false);
+      await processMultipleImages(pendingFirstImage.base64, null, pendingFirstImage.uri, null);
+      setPendingFirstImage(null);
     }
   };
 
@@ -301,9 +430,10 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
                 <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Titel:</Text> {scannedData.title}</Text>
                 <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Geschäft:</Text> {scannedData.store}</Text>
                 <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Betrag:</Text> {scannedData.amount} {scannedData.currency}</Text>
-                {scannedData.expiry && <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Ablauf:</Text> {scannedData.expiry}</Text>}
-                {scannedData.code && <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Nummer:</Text> {scannedData.code}</Text>}
-                {scannedData.pin && <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>PIN:</Text> {scannedData.pin}</Text>}
+                <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Ablauf:</Text> {scannedData.expiry || '-'}</Text>
+                <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Nummer:</Text> {scannedData.code || '-'}</Text>
+                <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>PIN:</Text> {scannedData.pin || '-'}</Text>
+                <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Webseite:</Text> {scannedData.website || '-'}</Text>
               </View>
             )}
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
@@ -325,12 +455,37 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
                     if (scannedData.expiry) setExpiry(scannedData.expiry);
                     if (scannedData.code) setCode(scannedData.code);
                     if (scannedData.pin) setPin(scannedData.pin);
+                    if (scannedData.website) setWebsite(scannedData.website);
                   }
                   setShowScanModal(false);
                   setScannedData(null);
                 }}
               >
                 <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>Übernehmen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Second Page Modal */}
+      <Modal visible={showSecondPageModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.pickerBox}>
+            <Text style={styles.pickerTitle}>Zweite Seite scannen?</Text>
+            <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20, textAlign: 'center' }}>Hat der Gutschein eine Rückseite mit weiteren Informationen?</Text>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, height: 50, backgroundColor: '#f1f5f9', borderRadius: 16, justifyContent: 'center', alignItems: 'center' }}
+                onPress={processSingleImage}
+              >
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#64748b' }}>Nein, weiter</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, height: 50, backgroundColor: '#2563eb', borderRadius: 16, justifyContent: 'center', alignItems: 'center' }}
+                onPress={() => pickImage('camera', true)}
+              >
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>Ja, scannen</Text>
               </TouchableOpacity>
             </View>
           </View>

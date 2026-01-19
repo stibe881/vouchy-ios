@@ -32,6 +32,16 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
+  // Convert YYYY-MM-DD to DD.MM.YYYY for display
+  const displayDateDE = (isoDate: string | null | undefined): string => {
+    if (!isoDate) return '';
+    const parts = isoDate.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}.${parts[1]}.${parts[0]}`;
+    }
+    return isoDate;
+  };
+
   const filteredAndSortedVouchers = useMemo(() => {
     let result = vouchers.filter(v =>
       v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -211,7 +221,7 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
                 <View style={styles.cardFooter}>
                   <View>
                     <Text style={styles.footerLabel}>GÜLTIG BIS</Text>
-                    <Text style={[styles.footerValue, voucher.expiry_date && styles.expiryHighlight]}>{voucher.expiry_date || 'Unbegrenzt'}</Text>
+                    <Text style={[styles.footerValue, voucher.expiry_date && styles.expiryHighlight]}>{displayDateDE(voucher.expiry_date) || 'Unbegrenzt'}</Text>
                   </View>
                   <TouchableOpacity
                     style={[styles.useButton, (remaining <= 0 || processing) && { opacity: 0.3 }]}

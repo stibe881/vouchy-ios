@@ -1,0 +1,29 @@
+{
+  "cli": {
+    "version": ">= 5.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyCbVG5VQgdSSyt2OwnpC7Vc7xhY3l4Z8Dk"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "stefan@gross-ict.ch",
+        "ascAppId": "6739889889"
+      }
+    }
+  }
+}

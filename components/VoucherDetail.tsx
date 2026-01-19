@@ -32,7 +32,7 @@ const VoucherDetail: React.FC<VoucherDetailProps> = ({ voucher, owner, family, f
   const [editCurrency, setEditCurrency] = useState(voucher.currency || 'CHF');
   const [editCode, setEditCode] = useState(voucher.code || '');
   const [editPin, setEditPin] = useState(voucher.pin || '');
-  const [editExpiry, setEditExpiry] = useState(voucher.expiry_date || '');
+  const [editExpiry, setEditExpiry] = useState('');
   const [editWebsite, setEditWebsite] = useState(voucher.website || '');
   const [editType, setEditType] = useState(voucher.type || 'VALUE');
   const [editFamilyId, setEditFamilyId] = useState<string | null>(voucher.family_id);
@@ -44,7 +44,7 @@ const VoucherDetail: React.FC<VoucherDetailProps> = ({ voucher, owner, family, f
     setEditCurrency(voucher.currency || 'CHF');
     setEditCode(voucher.code || '');
     setEditPin(voucher.pin || '');
-    setEditExpiry(voucher.expiry_date || '');
+    setEditExpiry(displayDateDE(voucher.expiry_date));
     setEditWebsite(voucher.website || '');
     setEditType(voucher.type || 'VALUE');
     setEditFamilyId(voucher.family_id);
@@ -69,7 +69,7 @@ const VoucherDetail: React.FC<VoucherDetailProps> = ({ voucher, owner, family, f
         currency: editCurrency,
         code: editCode.trim(),
         pin: editPin.trim(),
-        expiry_date: editExpiry.trim(),
+        expiry_date: convertDateToISO(editExpiry),
         website: editWebsite.trim(),
         type: editType,
         family_id: editFamilyId
@@ -126,6 +126,29 @@ const VoucherDetail: React.FC<VoucherDetailProps> = ({ voucher, owner, family, f
     if (cleaned.length > 2) res = cleaned.substring(0, 2) + '.' + cleaned.substring(2);
     if (cleaned.length > 4) res = cleaned.substring(0, 2) + '.' + cleaned.substring(2, 4) + '.' + cleaned.substring(4);
     return res;
+  };
+
+  // Convert YYYY-MM-DD to DD.MM.YYYY for display
+  const displayDateDE = (isoDate: string | null | undefined): string => {
+    if (!isoDate) return '';
+    const parts = isoDate.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}.${parts[1]}.${parts[0]}`;
+    }
+    return isoDate; // Return as-is if not ISO format
+  };
+
+  // Convert DD.MM.YYYY to YYYY-MM-DD for Supabase
+  const convertDateToISO = (dateStr: string): string | null => {
+    if (!dateStr || !dateStr.trim()) return null;
+    const parts = dateStr.split('.');
+    if (parts.length === 3) {
+      const [day, month, year] = parts;
+      if (day && month && year && year.length === 4) {
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      }
+    }
+    return null;
   };
 
   if (isEditing) {
@@ -242,7 +265,7 @@ const VoucherDetail: React.FC<VoucherDetailProps> = ({ voucher, owner, family, f
             </View>
             <View style={styles.infoBox}>
               <Text style={styles.infoLabel}>ABLAUFDATUM</Text>
-              <Text style={[styles.infoValue, { color: '#2563eb' }]}>{voucher.expiry_date || 'Unbegrenzt'}</Text>
+              <Text style={[styles.infoValue, { color: '#2563eb' }]}>{displayDateDE(voucher.expiry_date) || 'Unbegrenzt'}</Text>
             </View>
             <View style={styles.infoBox}>
               <Text style={styles.infoLabel}>GETEILT</Text>

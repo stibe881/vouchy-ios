@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { AuthState, Voucher, Family, User, AppNotification } from './types';
+import { AuthState, Voucher, Family, User, AppNotification, FamilyInvite } from './types';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import AddVoucher from './components/AddVoucher';
@@ -11,6 +11,7 @@ import VoucherDetail from './components/VoucherDetail';
 import NotificationCenter from './components/NotificationCenter';
 import Toast from './components/Toast';
 import { supabase, supabaseService } from './services/supabase';
+import { registerForPushNotifications, addNotificationResponseListener, scheduleExpiryNotifications } from './services/notifications';
 
 const App: React.FC = () => {
   const [auth, setAuth] = useState<AuthState>({
@@ -25,6 +26,7 @@ const App: React.FC = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' | 'warning' } | null>(null);
+  const [pendingInvites, setPendingInvites] = useState<FamilyInvite[]>([]);
 
   const loadingTimerRef = useRef<any>(null);
 
@@ -32,6 +34,7 @@ const App: React.FC = () => {
     setVouchers([]);
     setFamilies([]);
     setNotifications([]);
+    setPendingInvites([]);
     setSelectedVoucher(null);
     setView('dashboard');
   };
@@ -49,7 +52,14 @@ const App: React.FC = () => {
       setVouchers(vData);
       setFamilies(fData);
       setNotifications(nData);
-      if (pData) setAuth(prev => ({ ...prev, user: pData }));
+      if (pData) {
+        setAuth(prev => ({ ...prev, user: pData }));
+        // Load pending invites for this user's email
+        if (pData.email) {
+          const invites = await supabaseService.getPendingInvitesForUser(pData.email);
+          setPendingInvites(invites);
+        }
+      }
     } catch (err: any) {
       console.error("Fehler beim Laden:", err);
       setLoadError("Daten konnten nicht vollständig geladen werden.");
@@ -92,6 +102,25 @@ const App: React.FC = () => {
     if (auth.isAuthenticated && auth.user?.id) loadAllUserData(auth.user.id);
   }, [auth.isAuthenticated, auth.user?.id, loadAllUserData]);
 
+  // Register for push notifications when user is authenticated
+  useEffect(() => {
+    if (auth.isAuthenticated && auth.user?.id) {
+      registerForPushNotifications(auth.user.id);
+    }
+  }, [auth.isAuthenticated, auth.user?.id]);
+
+  // Handle notification tap - navigate to voucher
+  useEffect(() => {
+    const subscription = addNotificationResponseListener((voucherId) => {
+      const voucher = vouchers.find(v => v.id === voucherId);
+      if (voucher) {
+        setSelectedVoucher(voucher);
+        setView('detail');
+      }
+    });
+    return () => subscription.remove();
+  }, [vouchers]);
+
   const handleLogout = async () => {
     await supabaseService.signOut();
     clearData();
@@ -111,6 +140,10 @@ const App: React.FC = () => {
       const updated = await supabaseService.updateVoucher(v);
       setVouchers(prev => prev.map(item => item.id === v.id ? updated : item));
       if (selectedVoucher?.id === v.id) setSelectedVoucher(updated);
+      // Update expiry notifications
+      if (updated.expiry_date) {
+        scheduleExpiryNotifications(updated.id!, updated.title, updated.expiry_date);
+      }
     } catch (e: any) {
       setToast({ message: "Fehler beim Update: " + e.message, type: 'warning' });
       throw e; // Fehler an UI weitergeben
@@ -118,7 +151,11 @@ const App: React.FC = () => {
   };
 
   const handleDeleteVoucher = async (id: string) => {
-    await supabaseService.deleteVoucher(id);
+    const voucherToDelete = vouchers.find(v => v.id === id);
+    // Cancel any scheduled notifications for this voucher
+    const { cancelExpiryNotifications } = await import('./services/notifications');
+    await cancelExpiryNotifications(id);
+    await supabaseService.deleteVoucher(id, voucherToDelete?.image_url, voucherToDelete?.image_url_2);
     setVouchers(prev => prev.filter(v => v.id !== id));
     setView('dashboard');
   };
@@ -152,6 +189,10 @@ const App: React.FC = () => {
               setVouchers(prev => [saved, ...prev]);
               setView('dashboard');
               showNotification("Erfolgreich", `Gutschein gespeichert.`, 'success');
+              // Schedule expiry notifications
+              if (saved.expiry_date) {
+                scheduleExpiryNotifications(saved.id!, saved.title, saved.expiry_date);
+              }
             } catch (error: any) {
               console.error('Save error:', error);
               alert('Fehler beim Speichern: ' + (error?.message || 'Unbekannter Fehler'));
@@ -160,6 +201,7 @@ const App: React.FC = () => {
           {view === 'families' && (
             <FamiliesView
               families={families} user={auth.user}
+              pendingInvites={pendingInvites}
               onUpdateUser={(u) => { supabaseService.updateProfile(u); setAuth(prev => ({ ...prev, user: u })); }}
               onCreateFamily={async (name) => {
                 const f = await supabaseService.saveFamily({ name, user_id: auth.user!.id, member_count: 1 });
@@ -170,7 +212,15 @@ const App: React.FC = () => {
                 setFamilies(prev => prev.map(item => item.id === f.id ? up : item));
               }}
               onDeleteFamily={handleDeleteFamily}
-              onLogout={handleLogout} showNotification={showNotification}
+              onLogout={handleLogout}
+              showNotification={showNotification}
+              onRefreshInvites={async () => {
+                if (auth.user?.email) {
+                  const invites = await supabaseService.getPendingInvitesForUser(auth.user.email);
+                  setPendingInvites(invites);
+                  loadAllUserData(auth.user.id);
+                }
+              }}
             />
           )}
           {view === 'detail' && selectedVoucher && (

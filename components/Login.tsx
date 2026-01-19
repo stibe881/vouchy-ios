@@ -1,12 +1,16 @@
 
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import { supabaseService } from '../services/supabase';
 import Icon from './Icon';
 
 interface LoginProps {
   onLogin: (email: string) => void;
 }
+
+const STORED_CREDENTIALS_KEY = 'vouchervault_credentials';
 
 const Login: React.FC<LoginProps> = () => {
   const [isRegister, setIsRegister] = useState(false);
@@ -16,13 +20,57 @@ const Login: React.FC<LoginProps> = () => {
   const [lastName, setLastName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [hasStoredCredentials, setHasStoredCredentials] = useState(false);
+
+  // Check biometric availability and stored credentials on mount
+  useEffect(() => {
+    const checkBiometricAndCredentials = async () => {
+      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      setBiometricAvailable(compatible && enrolled);
+
+      // Check if we have stored credentials
+      const stored = await SecureStore.getItemAsync(STORED_CREDENTIALS_KEY);
+      if (stored) {
+        setHasStoredCredentials(true);
+        // Auto-trigger Face ID login
+        if (compatible && enrolled) {
+          handleBiometricLogin();
+        }
+      }
+    };
+    checkBiometricAndCredentials();
+  }, []);
+
+  const handleBiometricLogin = async () => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Anmelden mit Face ID',
+        cancelLabel: 'Abbrechen',
+        disableDeviceFallback: false,
+      });
+
+      if (result.success) {
+        const stored = await SecureStore.getItemAsync(STORED_CREDENTIALS_KEY);
+        if (stored) {
+          setLoading(true);
+          const { email: storedEmail, password: storedPassword } = JSON.parse(stored);
+          await supabaseService.signIn(storedEmail, storedPassword);
+        }
+      }
+    } catch (err: any) {
+      setError('Face ID fehlgeschlagen');
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!email || !password || (isRegister && (!firstName || !lastName))) {
       setError('Bitte fülle alle Felder aus.');
       return;
     }
-    
+
     setError(null);
     setLoading(true);
     try {
@@ -31,6 +79,26 @@ const Login: React.FC<LoginProps> = () => {
         await supabaseService.signUp(email, password, fullName);
       } else {
         await supabaseService.signIn(email, password);
+
+        // After successful login, offer to enable Face ID
+        if (biometricAvailable && !hasStoredCredentials) {
+          Alert.alert(
+            'Face ID aktivieren?',
+            'Möchtest du dich zukünftig mit Face ID anmelden?',
+            [
+              { text: 'Nein', style: 'cancel' },
+              {
+                text: 'Ja, aktivieren',
+                onPress: async () => {
+                  await SecureStore.setItemAsync(
+                    STORED_CREDENTIALS_KEY,
+                    JSON.stringify({ email, password })
+                  );
+                }
+              }
+            ]
+          );
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Ein Fehler ist aufgetreten.');
@@ -50,13 +118,33 @@ const Login: React.FC<LoginProps> = () => {
         </View>
 
         <View style={styles.form}>
+          {/* Face ID Button */}
+          {!isRegister && hasStoredCredentials && biometricAvailable && (
+            <TouchableOpacity
+              style={styles.faceIdButton}
+              onPress={handleBiometricLogin}
+              disabled={loading}
+            >
+              <Icon name="scan-outline" size={28} color="#2563eb" />
+              <Text style={styles.faceIdButtonText}>Mit Face ID anmelden</Text>
+            </TouchableOpacity>
+          )}
+
+          {!isRegister && hasStoredCredentials && biometricAvailable && (
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>oder</Text>
+              <View style={styles.dividerLine} />
+            </View>
+          )}
+
           {isRegister && (
             <View style={styles.row}>
-              <View style={{flex: 1, marginRight: 8}}>
+              <View style={{ flex: 1, marginRight: 8 }}>
                 <Text style={styles.label}>Vorname</Text>
                 <TextInput style={styles.input} placeholder="Max" placeholderTextColor="#9ca3af" value={firstName} onChangeText={setFirstName} />
               </View>
-              <View style={{flex: 1}}>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Nachname</Text>
                 <TextInput style={styles.input} placeholder="Mustermann" placeholderTextColor="#9ca3af" value={lastName} onChangeText={setLastName} />
               </View>
@@ -64,7 +152,7 @@ const Login: React.FC<LoginProps> = () => {
           )}
 
           <Text style={styles.label}>Email</Text>
-          <TextInput 
+          <TextInput
             style={styles.input}
             placeholder="beispiel@email.ch"
             placeholderTextColor="#9ca3af"
@@ -75,7 +163,7 @@ const Login: React.FC<LoginProps> = () => {
           />
 
           <Text style={styles.label}>Passwort</Text>
-          <TextInput 
+          <TextInput
             style={styles.input}
             placeholder="••••••••"
             placeholderTextColor="#9ca3af"
@@ -86,8 +174,8 @@ const Login: React.FC<LoginProps> = () => {
 
           {error && <Text style={styles.errorText}>{error}</Text>}
 
-          <TouchableOpacity 
-            style={[styles.button, loading && styles.buttonDisabled]} 
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleSubmit}
             disabled={loading}
           >
@@ -122,6 +210,22 @@ const styles = StyleSheet.create({
   errorText: { color: '#ef4444', fontSize: 13, marginBottom: 10, textAlign: 'center', fontWeight: '600' },
   toggleMode: { marginTop: 20, alignItems: 'center' },
   toggleModeText: { color: '#2563eb', fontSize: 14, fontWeight: '600' },
+  faceIdButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 55,
+    backgroundColor: '#eff6ff',
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#2563eb',
+    gap: 12,
+    marginBottom: 20
+  },
+  faceIdButtonText: { color: '#2563eb', fontSize: 17, fontWeight: '700' },
+  divider: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#e5e7eb' },
+  dividerText: { color: '#9ca3af', fontSize: 13, marginHorizontal: 12 }
 });
 
 export default Login;
