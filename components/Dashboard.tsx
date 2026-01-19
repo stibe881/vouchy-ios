@@ -24,12 +24,17 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
-  
+
+  // Redemption Modal State
+  const [showRedeemModal, setShowRedeemModal] = useState(false);
+  const [redeemAmount, setRedeemAmount] = useState('');
+  const [redeemVoucher, setRedeemVoucher] = useState<Voucher | null>(null);
+
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const filteredAndSortedVouchers = useMemo(() => {
-    let result = vouchers.filter(v => 
-      v.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    let result = vouchers.filter(v =>
+      v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       v.store.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
@@ -65,47 +70,58 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
     }
   };
 
-  const useVoucher = async (voucher: Voucher) => {
-    const remaining = Number(voucher.remaining_amount || 0);
-    if (remaining <= 0 || isProcessing) return;
-    
-    const promptText = voucher.type === 'VALUE' 
-      ? `Betrag abziehen (${voucher.currency || 'CHF'}):` 
-      : `Anzahl abziehen:`;
-      
-    const reduction = window.prompt(promptText, '5');
-    if (reduction !== null && reduction.trim() !== "") {
-      const val = parseFloat(reduction.replace(',', '.'));
-      if (!isNaN(val) && val > 0) {
-        setIsProcessing(voucher.id);
-        try {
-          const newAmount = Math.max(0, remaining - val);
-          
-          // Wir fügen die Redemption lokal zum history-array hinzu (wird vom Parent in DB gespeichert)
-          const newRedemption = {
-            id: Date.now().toString(),
-            voucher_id: voucher.id,
-            amount: val,
-            timestamp: new Date().toISOString(),
-            user_name: userName || 'Ich'
-          };
+  const useVoucher = (voucher: Voucher) => {
+    setRedeemVoucher(voucher);
+    setRedeemAmount(voucher.type === 'QUANTITY' ? '1' : ''); // Default 1 for quantity
+    setShowRedeemModal(true);
+  };
 
-          await onUpdateVoucher({ 
-            ...voucher, 
-            remaining_amount: newAmount,
-            history: [newRedemption, ...(voucher.history || [])]
-          });
-        } catch (err) {
-          alert("Konnte den Betrag nicht aktualisieren.");
-        } finally {
-          setIsProcessing(null);
-        }
-      }
+  const handleRedeemConfirm = async () => {
+    if (!redeemVoucher || !redeemAmount.trim()) return;
+
+    const val = parseFloat(redeemAmount.replace(',', '.'));
+    const remaining = Number(redeemVoucher.remaining_amount || 0);
+
+    if (isNaN(val) || val <= 0) {
+      alert("Bitte einen gültigen Betrag eingeben.");
+      return;
+    }
+
+    if (val > remaining) {
+      alert("Betrag ist höher als das Restguthaben.");
+      return;
+    }
+
+    setIsProcessing(redeemVoucher.id);
+    setShowRedeemModal(false);
+
+    try {
+      const newAmount = Math.max(0, remaining - val);
+
+      const newRedemption = {
+        id: Date.now().toString(),
+        voucher_id: redeemVoucher.id,
+        amount: val, // This number is correctly passed
+        timestamp: new Date().toISOString(),
+        user_name: userName || 'Ich'
+      };
+
+      await onUpdateVoucher({
+        ...redeemVoucher,
+        remaining_amount: newAmount,
+        history: [newRedemption, ...(redeemVoucher.history || [])]
+      });
+    } catch (err) {
+      alert("Konnte den Betrag nicht aktualisieren.");
+    } finally {
+      setIsProcessing(null);
+      setRedeemVoucher(null);
+      setRedeemAmount('');
     }
   };
 
   return (
-    <View style={{flex: 1}}>
+    <View style={{ flex: 1 }}>
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>Guten Tag, {userName || 'Benutzer'}</Text>
@@ -122,9 +138,9 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
       <View style={styles.filterContainer}>
         <View style={styles.searchBar}>
           <Icon name="search-outline" size={18} color="#94a3b8" />
-          <TextInput 
-            style={styles.searchInput} 
-            placeholder="Suchen..." 
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Suchen..."
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholderTextColor="#94a3b8"
@@ -137,8 +153,8 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
             { id: 'amount', label: 'Betrag', icon: 'card-outline' },
             { id: 'expiry', label: 'Ablauf', icon: 'calendar-outline' }
           ].map(opt => (
-            <TouchableOpacity 
-              key={opt.id} 
+            <TouchableOpacity
+              key={opt.id}
               onPress={() => setSortBy(opt.id as SortOption)}
               style={[styles.sortChip, sortBy === opt.id && styles.sortChipActive]}
             >
@@ -149,14 +165,14 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
         </ScrollView>
       </View>
 
-      <ScrollView 
-        showsVerticalScrollIndicator={false} 
+      <ScrollView
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#2563eb" />}
       >
         {loadError && (
           <View style={styles.errorBox}>
-            <Icon name="alert-circle" size={20} color="#ef4444" style={{marginRight: 10}} />
+            <Icon name="alert-circle" size={20} color="#ef4444" style={{ marginRight: 10 }} />
             <Text style={styles.errorText}>{loadError}</Text>
           </View>
         )}
@@ -168,12 +184,12 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
             const initial = Number(voucher.initial_amount || 0);
             const progress = initial > 0 ? (remaining / initial) * 100 : 0;
             const processing = isProcessing === voucher.id;
-            
+
             return (
               <TouchableOpacity key={voucher.id} style={styles.card} activeOpacity={0.9} onPress={() => onSelectVoucher(voucher)}>
                 {family && (
                   <View style={styles.familyBadge}>
-                    <Icon name="people" size={10} color="#2563eb" style={{marginRight: 4}} />
+                    <Icon name="people" size={10} color="#2563eb" style={{ marginRight: 4 }} />
                     <Text style={styles.familyBadgeText}>{family.name}</Text>
                   </View>
                 )}
@@ -197,8 +213,8 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
                     <Text style={styles.footerLabel}>GÜLTIG BIS</Text>
                     <Text style={[styles.footerValue, voucher.expiry_date && styles.expiryHighlight]}>{voucher.expiry_date || 'Unbegrenzt'}</Text>
                   </View>
-                  <TouchableOpacity 
-                    style={[styles.useButton, (remaining <= 0 || processing) && { opacity: 0.3 }]} 
+                  <TouchableOpacity
+                    style={[styles.useButton, (remaining <= 0 || processing) && { opacity: 0.3 }]}
                     onPress={(e: any) => { e.stopPropagation(); if (remaining > 0 && !processing) useVoucher(voucher); }}
                   >
                     <Text style={styles.useButtonText}>{processing ? '...' : 'Abziehen'}</Text>
@@ -207,7 +223,7 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
               </TouchableOpacity>
             );
           })}
-          
+
           {filteredAndSortedVouchers.length === 0 && (
             <View style={styles.emptyContainer}>
               <Icon name="search-outline" size={60} color="#e2e8f0" />
@@ -216,6 +232,37 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
           )}
         </View>
       </ScrollView>
+
+      {/* Redemption Modal */}
+      {showRedeemModal && redeemVoucher && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              {redeemVoucher.type === 'VALUE' ? 'Betrag abziehen' : 'Anzahl abziehen'}
+            </Text>
+            <Text style={styles.modalSubtitle}>{redeemVoucher.title}</Text>
+
+            <TextInput
+              style={styles.modalInput}
+              value={redeemAmount}
+              onChangeText={setRedeemAmount}
+              placeholder={redeemVoucher.type === 'VALUE' ? "Betrag (z.B. 20.00)" : "Anzahl"}
+              keyboardType="numeric"
+              autoFocus
+              placeholderTextColor="#9ca3af"
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowRedeemModal(false)}>
+                <Text style={styles.modalCancelText}>Abbrechen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirmBtn} onPress={handleRedeemConfirm}>
+                <Text style={styles.modalConfirmText}>Bestätigen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -259,7 +306,17 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: 'center', marginTop: 40 },
   emptyText: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 10 },
   errorBox: { flexDirection: 'row', backgroundColor: '#fff1f2', padding: 15, borderRadius: 16, marginBottom: 20, alignItems: 'center' },
-  errorText: { color: '#e11d48', fontSize: 13, fontWeight: '600' }
+  errorText: { color: '#e11d48', fontSize: 13, fontWeight: '600' },
+  modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
+  modalContent: { backgroundColor: '#fff', width: '85%', borderRadius: 24, padding: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 20, elevation: 5 },
+  modalTitle: { fontSize: 20, fontWeight: '900', color: '#0f172a', marginBottom: 4, textAlign: 'center' },
+  modalSubtitle: { fontSize: 14, color: '#64748b', marginBottom: 20, textAlign: 'center' },
+  modalInput: { height: 56, backgroundColor: '#f8fafc', borderRadius: 16, paddingHorizontal: 20, fontSize: 20, fontWeight: '700', color: '#0f172a', textAlign: 'center', marginBottom: 20, borderWidth: 1, borderColor: '#e2e8f0' },
+  modalActions: { flexDirection: 'row', gap: 12 },
+  modalCancelBtn: { flex: 1, height: 50, justifyContent: 'center', alignItems: 'center', borderRadius: 16, backgroundColor: '#f1f5f9' },
+  modalCancelText: { fontSize: 16, fontWeight: '700', color: '#64748b' },
+  modalConfirmBtn: { flex: 1, height: 50, justifyContent: 'center', alignItems: 'center', borderRadius: 16, backgroundColor: '#2563eb' },
+  modalConfirmText: { fontSize: 16, fontWeight: '800', color: '#fff' }
 });
 
 export default Dashboard;

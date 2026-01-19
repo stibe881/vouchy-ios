@@ -1,6 +1,6 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { StyleSheet, View, SafeAreaView, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, ActivityIndicator } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { AuthState, Voucher, Family, User, AppNotification } from './types';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
@@ -25,7 +25,7 @@ const App: React.FC = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' | 'warning' } | null>(null);
-  
+
   const loadingTimerRef = useRef<any>(null);
 
   const clearData = () => {
@@ -129,54 +129,63 @@ const App: React.FC = () => {
   };
 
   if (auth.isLoading) return <View style={styles.loadingContainer}><ActivityIndicator size="large" color="#2563eb" /></View>;
-  if (!auth.isAuthenticated || !auth.user) return <Login onLogin={() => {}} />;
+  if (!auth.isAuthenticated || !auth.user) return <Login onLogin={() => { }} />;
 
   return (
-    <SafeAreaView style={styles.container}>
-      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
-      <View style={styles.content}>
-        {view === 'dashboard' && (
-          <Dashboard 
-            vouchers={vouchers} families={families} notifications={notifications}
-            onUpdateVoucher={handleUpdateVoucher} onSelectVoucher={(v) => { setSelectedVoucher(v); setView('detail'); }}
-            onOpenNotifications={() => setView('notifications')} onRefresh={() => loadAllUserData(auth.user!.id)}
-            loadError={loadError} userName={auth.user?.name}
-          />
-        )}
-        {view === 'add' && <AddVoucher families={families} onCancel={() => setView('dashboard')} onSave={async (v) => {
-          const saved = await supabaseService.saveVoucher({...v, user_id: auth.user!.id});
-          setVouchers(prev => [saved, ...prev]);
-          setView('dashboard');
-          showNotification("Erfolgreich", `Gutschein gespeichert.`, 'success');
-        }} />}
-        {view === 'families' && (
-          <FamiliesView 
-            families={families} user={auth.user}
-            onUpdateUser={(u) => { supabaseService.updateProfile(u); setAuth(prev => ({...prev, user: u})); }}
-            onCreateFamily={async (name) => {
-              const f = await supabaseService.saveFamily({ name, user_id: auth.user!.id, member_count: 1 });
-              setFamilies(prev => [...prev, f]);
-            }}
-            onUpdateFamily={async (f) => {
-              const up = await supabaseService.updateFamily(f);
-              setFamilies(prev => prev.map(item => item.id === f.id ? up : item));
-            }}
-            onDeleteFamily={handleDeleteFamily}
-            onLogout={handleLogout} showNotification={showNotification}
-          />
-        )}
-        {view === 'detail' && selectedVoucher && (
-          <VoucherDetail 
-            voucher={selectedVoucher} owner={auth.user}
-            family={families.find(f => f.id === selectedVoucher.family_id) || null}
-            families={families} onBack={() => setView('dashboard')}
-            onUpdateVoucher={handleUpdateVoucher} onDeleteVoucher={handleDeleteVoucher}
-          />
-        )}
-        {view === 'notifications' && <NotificationCenter notifications={notifications} onBack={() => { supabaseService.markNotificationsAsRead(auth.user?.id || ''); setView('dashboard'); }} onClearAll={() => setNotifications([])} />}
-      </View>
-      {view !== 'detail' && view !== 'notifications' && <Navigation currentView={view === 'families' ? 'families' : (view === 'add' ? 'add' : 'dashboard')} setView={setView} />}
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.container}>
+        {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
+        <View style={styles.content}>
+          {view === 'dashboard' && (
+            <Dashboard
+              vouchers={vouchers} families={families} notifications={notifications}
+              onUpdateVoucher={handleUpdateVoucher} onSelectVoucher={(v) => { setSelectedVoucher(v); setView('detail'); }}
+              onOpenNotifications={() => setView('notifications')} onRefresh={() => loadAllUserData(auth.user!.id)}
+              loadError={loadError} userName={auth.user?.name}
+            />
+          )}
+          {view === 'add' && <AddVoucher families={families} onCancel={() => setView('dashboard')} onSave={async (v) => {
+            try {
+              console.log('Saving voucher:', v);
+              const saved = await supabaseService.saveVoucher({ ...v, user_id: auth.user!.id });
+              console.log('Saved voucher:', saved);
+              setVouchers(prev => [saved, ...prev]);
+              setView('dashboard');
+              showNotification("Erfolgreich", `Gutschein gespeichert.`, 'success');
+            } catch (error: any) {
+              console.error('Save error:', error);
+              alert('Fehler beim Speichern: ' + (error?.message || 'Unbekannter Fehler'));
+            }
+          }} />}
+          {view === 'families' && (
+            <FamiliesView
+              families={families} user={auth.user}
+              onUpdateUser={(u) => { supabaseService.updateProfile(u); setAuth(prev => ({ ...prev, user: u })); }}
+              onCreateFamily={async (name) => {
+                const f = await supabaseService.saveFamily({ name, user_id: auth.user!.id, member_count: 1 });
+                setFamilies(prev => [...prev, f]);
+              }}
+              onUpdateFamily={async (f) => {
+                const up = await supabaseService.updateFamily(f);
+                setFamilies(prev => prev.map(item => item.id === f.id ? up : item));
+              }}
+              onDeleteFamily={handleDeleteFamily}
+              onLogout={handleLogout} showNotification={showNotification}
+            />
+          )}
+          {view === 'detail' && selectedVoucher && (
+            <VoucherDetail
+              voucher={selectedVoucher} owner={auth.user}
+              family={families.find(f => f.id === selectedVoucher.family_id) || null}
+              families={families} onBack={() => setView('dashboard')}
+              onUpdateVoucher={handleUpdateVoucher} onDeleteVoucher={handleDeleteVoucher}
+            />
+          )}
+          {view === 'notifications' && <NotificationCenter notifications={notifications} onBack={() => { supabaseService.markNotificationsAsRead(auth.user?.id || ''); setView('dashboard'); }} onClearAll={() => setNotifications([])} />}
+        </View>
+        {view !== 'detail' && view !== 'notifications' && <Navigation currentView={view === 'families' ? 'families' : (view === 'add' ? 'add' : 'dashboard')} setView={setView} />}
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 };
 

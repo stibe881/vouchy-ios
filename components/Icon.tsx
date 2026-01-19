@@ -1,32 +1,21 @@
-
 import React from 'react';
-
-// Wir nutzen hier direkt das Web Component <ion-icon>, da wir uns im Browser befinden
-// und dies zuverlässiger ist als der @expo/vector-icons Import via esm.sh.
+import { Ionicons } from '@expo/vector-icons';
+import { StyleProp, TextStyle } from 'react-native';
 
 interface IconProps {
-  name: string;
+  name: any; // Using any to avoid strict type checks on existing usage strings, though keyof typeof Ionicons.glyphMap is better
   size?: number;
   color?: string;
-  style?: any;
+  style?: StyleProp<TextStyle>;
 }
 
 const Icon: React.FC<IconProps> = ({ name, size = 24, color = '#000', style }) => {
-  // Mapping für React Native Web: Wir rendern das custom element als string tag
-  // TypeScript meckert ggf. ohne @ts-ignore, da ion-icon kein Standard-HTML-Tag ist.
-  
   return (
-    // @ts-ignore
-    <ion-icon 
-      name={name} 
-      style={{ 
-        fontSize: size, 
-        color: color, 
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        ...style 
-      }}
+    <Ionicons
+      name={name}
+      size={size}
+      color={color}
+      style={style}
     />
   );
 };

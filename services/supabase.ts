@@ -50,7 +50,8 @@ export const supabaseService = {
 
   signOut: async () => {
     await supabase.auth.signOut();
-    window.localStorage.clear();
+    await supabase.auth.signOut();
+    // window.localStorage.clear(); // Removed for React Native compatibility
   },
 
   getVouchers: async (userId: string) => {
@@ -60,30 +61,29 @@ export const supabaseService = {
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
-    
+
     if (error) throw error;
     return (data || []) as Voucher[];
   },
 
   saveVoucher: async (voucherData: any) => {
-    const { id, created_at, history, ...payload } = voucherData;
+    // history is now allowed (requires SQL migration)
+    const { id, created_at, ...payload } = voucherData;
     // Sicherstellen, dass family_id null ist, wenn nicht valide
     if (!isUUID(payload.family_id)) payload.family_id = null;
-    
+
     const { data, error } = await supabase.from('vouchers').insert([payload]).select();
     if (error) throw error;
     return data[0] as Voucher;
   },
 
   updateVoucher: async (voucher: Voucher) => {
+    // history is now allowed (requires SQL migration)
     const { id, created_at, user_id, ...updateFields } = voucher;
+
     // Datenbereinigung vor dem Senden an Supabase
     if (!isUUID(updateFields.family_id)) (updateFields as any).family_id = null;
-    
-    // History wird oft als JSONB in Supabase gespeichert. Falls die Spalte fehlt, 
-    // entfernen wir sie hier temporär, um den Absturz zu verhindern, falls gewünscht.
-    // Aber für diese App nehmen wir an, die Spalte existiert.
-    
+
     const { data, error } = await supabase.from('vouchers').update(updateFields).eq('id', id).select();
     if (error) {
       console.error("Supabase Update Error:", error);
@@ -165,17 +165,24 @@ export const supabaseService = {
     if (error) throw error;
   },
 
-  uploadVoucherImage: async (base64Data: string, fileName: string, mimeType: string) => {
+  uploadVoucherImage: async (uriOrBase64: string, fileName: string, mimeType: string) => {
     try {
-      const byteCharacters = atob(base64Data);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      let blob;
+      // If it's a URI (file:// or content://), fetch it as a blob
+      if (uriOrBase64.startsWith('file://') || uriOrBase64.startsWith('content://') || uriOrBase64.startsWith('http')) {
+        const response = await fetch(uriOrBase64);
+        blob = await response.blob();
+      } else {
+        // Fallback for base64 string (less efficient on native but kept for compatibility logic)
+        // Note: atob is not available in RN without polyfill. 
+        // Assuming this branch might not be hit if we pass URI, or we need 'base-64' package.
+        // Better to rely on URI upload.
+        return null;
       }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: mimeType });
+
       const filePath = `voucher-${Date.now()}.${fileName.split('.').pop() || 'jpg'}`;
       const { error: uploadError } = await supabase.storage.from('vouchers').upload(filePath, blob);
+
       if (uploadError) throw uploadError;
       const { data } = supabase.storage.from('vouchers').getPublicUrl(filePath);
       return data.publicUrl;

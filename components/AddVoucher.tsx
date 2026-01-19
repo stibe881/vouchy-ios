@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Image } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Voucher, Family, VoucherType } from '../types';
-import { GoogleGenAI, Type } from "@google/genai";
 import { supabaseService } from '../services/supabase';
 import Icon from './Icon';
 
@@ -23,6 +23,7 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
   const [expiry, setExpiry] = useState('');
   const [code, setCode] = useState('');
   const [pin, setPin] = useState('');
+  const [website, setWebsite] = useState('');
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -71,6 +72,7 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
       expiry_date: expiry.trim() || null,
       code: code.trim(),
       pin: pin.trim(),
+      website: website.trim(),
       family_id: familyId,
       image_url: imageUrl,
       created_at: new Date().toISOString(),
@@ -79,64 +81,76 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
     });
   };
 
-  const pickImageWeb = (source: 'camera' | 'gallery') => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    if (source === 'camera') input.capture = 'environment';
-    
-    input.onchange = (e: any) => {
-      const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event: any) => {
-          if (typeof event.target.result === 'string') {
-            const base64 = event.target.result.split(',')[1];
-            const uri = URL.createObjectURL(file);
-            processImage(base64, uri, file.name);
-          }
-        };
-        reader.readAsDataURL(file);
+  const pickImage = async (source: 'camera' | 'gallery') => {
+    try {
+      let result;
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        base64: true,
+      };
+
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (permission.status !== 'granted') {
+          alert('Kamerazugriff erforderlich');
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync(options);
+      } else {
+        result = await ImagePicker.launchImageLibraryAsync(options);
       }
-    };
-    input.click();
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        if (asset.uri && asset.base64) {
+          processImage(asset.base64, asset.uri, asset.fileName || 'voucher.jpg');
+        }
+      }
+    } catch (e) {
+      console.error("Fehler beim Bildwählen:", e);
+      alert("Fehler beim Laden des Bildes.");
+    }
   };
 
   const processImage = async (base64: string, uri: string, fileName: string = 'voucher.jpg') => {
     setIsAnalyzing(true);
     try {
-      const uploadedUrl = await supabaseService.uploadVoucherImage(base64, fileName, 'image/jpeg');
+      // Use URI for upload (more robust on Native), base64 for AI analysis
+      const uploadedUrl = await supabaseService.uploadVoucherImage(uri, fileName, 'image/jpeg');
       if (uploadedUrl) setImageUrl(uploadedUrl);
       else setImageUrl(uri);
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const aiResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ 
-          parts: [
-            { inlineData: { mimeType: 'image/jpeg', data: base64 } }, 
-            { text: "Extrahiere store, title, amount, currency, voucherType ('VALUE' oder 'QUANTITY'), expiryDate (Format DD.MM.YYYY), code (Gutscheinnummer) und pin. Antworte NUR im JSON Format." }
-          ] 
-        }],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              store: { type: Type.STRING },
-              title: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              currency: { type: Type.STRING },
-              voucherType: { type: Type.STRING },
-              expiryDate: { type: Type.STRING },
-              code: { type: Type.STRING },
-              pin: { type: Type.STRING },
-            },
-          },
+      // Use direct REST API to avoid environment issues with @google/genai SDK in React Native
+      const API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: "Extrahiere store, title, amount, currency, voucherType ('VALUE' oder 'QUANTITY'), expiryDate (Format DD.MM.YYYY), code (Gutscheinnummer) und pin. Antworte NUR im JSON Format." },
+              { inline_data: { mime_type: 'image/jpeg', data: base64 } }
+            ]
+          }],
+          generationConfig: {
+            response_mime_type: "application/json"
+          }
+        })
       });
 
-      const result = JSON.parse(aiResponse.text || '{}');
+      const data = await response.json();
+      console.log('AI API Response:', JSON.stringify(data, null, 2));
+
+      let resultText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      console.log('AI Result Text:', resultText);
+
+      const result = JSON.parse(resultText);
+      console.log('Parsed Result:', result);
+
       setScannedData({
         title: result.title || '',
         store: result.store || '',
@@ -148,9 +162,9 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
         pin: result.pin || ''
       });
       setShowScanModal(true);
-      
+
     } catch (error) {
-      console.error(error);
+      console.error("AI Scan Error:", error);
       alert("KI Scan: Daten konnten nicht automatisch erkannt werden.");
     } finally {
       setIsAnalyzing(false);
@@ -158,7 +172,7 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
   };
 
   return (
-    <View style={{flex: 1}}>
+    <View style={{ flex: 1 }}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onCancel} style={styles.backButton}>
@@ -169,13 +183,13 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
 
         <View style={styles.scanSection}>
           <View style={styles.scanActions}>
-            <TouchableOpacity style={[styles.scanActionBtn, isAnalyzing && styles.scanButtonDisabled]} onPress={() => pickImageWeb('camera')} disabled={isAnalyzing}>
+            <TouchableOpacity style={[styles.scanActionBtn, isAnalyzing && styles.scanButtonDisabled]} onPress={() => pickImage('camera')} disabled={isAnalyzing}>
               <View style={[styles.scanIconBox, { backgroundColor: '#eff6ff' }]}>
                 {isAnalyzing ? <ActivityIndicator color="#2563eb" /> : <Icon name="camera" size={28} color="#2563eb" />}
               </View>
               <Text style={styles.scanActionLabel}>KI Scan</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.scanActionBtn, isAnalyzing && styles.scanButtonDisabled]} onPress={() => pickImageWeb('gallery')} disabled={isAnalyzing}>
+            <TouchableOpacity style={[styles.scanActionBtn, isAnalyzing && styles.scanButtonDisabled]} onPress={() => pickImage('gallery')} disabled={isAnalyzing}>
               <View style={[styles.scanIconBox, { backgroundColor: '#f0fdf4' }]}>
                 <Icon name="images" size={28} color="#10b981" />
               </View>
@@ -195,14 +209,28 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
             <TextInput style={styles.input} value={store} onChangeText={setStore} placeholder="z.B. Migros, Zalando" placeholderTextColor="#9ca3af" />
           </View>
 
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Gutscheintyp</Text>
+            <View style={styles.familySelect}>
+              <TouchableOpacity style={[styles.familyItem, type === 'VALUE' && styles.familyItemActive]} onPress={() => setType('VALUE')}>
+                <Text style={[styles.familyItemText, type === 'VALUE' && styles.familyItemTextActive]}>Wert-Gutschein</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.familyItem, type === 'QUANTITY' && styles.familyItemActive]} onPress={() => setType('QUANTITY')}>
+                <Text style={[styles.familyItemText, type === 'QUANTITY' && styles.familyItemTextActive]}>Anzahl-Gutschein</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           <View style={styles.row}>
             <View style={[styles.inputGroup, { flex: 1, marginRight: 12 }]}>
-              <Text style={styles.label}>Guthaben</Text>
+              <Text style={styles.label}>{type === 'VALUE' ? 'Guthaben' : 'Anzahl'}</Text>
               <View style={styles.amountInputContainer}>
-                <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0.00" placeholderTextColor="#9ca3af" />
-                <TouchableOpacity style={styles.currencyBadge} onPress={() => setShowCurrencyPicker(true)}>
-                  <Text style={styles.currencyBadgeText}>{currency}</Text>
-                </TouchableOpacity>
+                <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder={type === 'VALUE' ? '0.00' : '0'} placeholderTextColor="#9ca3af" />
+                {type === 'VALUE' && (
+                  <TouchableOpacity style={styles.currencyBadge} onPress={() => setShowCurrencyPicker(true)}>
+                    <Text style={styles.currencyBadgeText}>{currency}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
             <View style={[styles.inputGroup, { flex: 1 }]}>
@@ -220,6 +248,11 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
               <Text style={styles.label}>PIN</Text>
               <TextInput style={styles.input} value={pin} onChangeText={setPin} placeholder="PIN" placeholderTextColor="#9ca3af" />
             </View>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Webseite</Text>
+            <TextInput style={styles.input} value={website} onChangeText={setWebsite} placeholder="https://example.com" placeholderTextColor="#9ca3af" autoCapitalize="none" keyboardType="url" />
           </View>
 
           <View style={styles.inputGroup}>
@@ -249,7 +282,7 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
             <Text style={styles.pickerTitle}>Währung wählen</Text>
             {CURRENCIES.map(cur => (
               <TouchableOpacity key={cur} style={styles.pickerItem} onPress={() => { setCurrency(cur); setShowCurrencyPicker(false); }}>
-                <Text style={[styles.pickerItemText, currency === cur && {color: '#2563eb', fontWeight: '800'}]}>{cur}</Text>
+                <Text style={[styles.pickerItemText, currency === cur && { color: '#2563eb', fontWeight: '800' }]}>{cur}</Text>
                 {currency === cur && <Icon name="checkmark" size={18} color="#2563eb" />}
               </TouchableOpacity>
             ))}
@@ -257,7 +290,52 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
         </TouchableOpacity>
       </Modal>
 
-      {/* Scan Preview Modal... (Beibehalten aber verkürzt hier) */}
+      {/* Scan Preview Modal */}
+      <Modal visible={showScanModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.pickerBox}>
+            <Text style={styles.pickerTitle}>KI Scan Ergebnis</Text>
+            {scannedData && (
+              <View>
+                <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 15 }}>Gefundene Daten:</Text>
+                <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Titel:</Text> {scannedData.title}</Text>
+                <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Geschäft:</Text> {scannedData.store}</Text>
+                <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Betrag:</Text> {scannedData.amount} {scannedData.currency}</Text>
+                {scannedData.expiry && <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Ablauf:</Text> {scannedData.expiry}</Text>}
+                {scannedData.code && <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>Nummer:</Text> {scannedData.code}</Text>}
+                {scannedData.pin && <Text style={{ fontSize: 13, marginBottom: 5 }}><Text style={{ fontWeight: '700' }}>PIN:</Text> {scannedData.pin}</Text>}
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
+              <TouchableOpacity
+                style={{ flex: 1, height: 50, backgroundColor: '#f1f5f9', borderRadius: 16, justifyContent: 'center', alignItems: 'center' }}
+                onPress={() => { setShowScanModal(false); setScannedData(null); }}
+              >
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#64748b' }}>Abbrechen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, height: 50, backgroundColor: '#2563eb', borderRadius: 16, justifyContent: 'center', alignItems: 'center' }}
+                onPress={() => {
+                  if (scannedData) {
+                    setTitle(scannedData.title);
+                    setStore(scannedData.store);
+                    setAmount(scannedData.amount);
+                    setCurrency(scannedData.currency);
+                    setType(scannedData.type);
+                    if (scannedData.expiry) setExpiry(scannedData.expiry);
+                    if (scannedData.code) setCode(scannedData.code);
+                    if (scannedData.pin) setPin(scannedData.pin);
+                  }
+                  setShowScanModal(false);
+                  setScannedData(null);
+                }}
+              >
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>Übernehmen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };

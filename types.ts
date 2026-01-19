@@ -45,6 +45,7 @@ export interface Voucher {
   user_id: string;
   code?: string;
   pin?: string;
+  website?: string;
   history?: Redemption[]; // Neu: Verlauf der Einlösungen
 }
 
