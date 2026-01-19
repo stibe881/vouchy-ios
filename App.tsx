@@ -213,6 +213,17 @@ const App: React.FC = () => {
               }}
               onDeleteFamily={handleDeleteFamily}
               onLogout={handleLogout}
+              onDeleteAccount={async () => {
+                if (auth.user) {
+                  try {
+                    await supabaseService.deleteAccount(auth.user.id);
+                    clearData();
+                    setAuth({ user: null, isAuthenticated: false, isLoading: false });
+                  } catch (e: any) {
+                    console.error('Delete account error:', e);
+                  }
+                }
+              }}
               showNotification={showNotification}
               onRefreshInvites={async () => {
                 if (auth.user?.email) {

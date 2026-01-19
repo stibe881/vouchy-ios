@@ -15,11 +15,12 @@ interface FamiliesViewProps {
   onUpdateFamily: (family: Family) => void;
   onDeleteFamily?: (id: string) => void;
   onLogout: () => void;
+  onDeleteAccount: () => void;
   showNotification: (title: string, body: string) => void;
   onRefreshInvites: () => void;
 }
 
-const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvites, onUpdateUser, onCreateFamily, onUpdateFamily, onDeleteFamily, onLogout, showNotification, onRefreshInvites }) => {
+const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvites, onUpdateUser, onCreateFamily, onUpdateFamily, onDeleteFamily, onLogout, onDeleteAccount, showNotification, onRefreshInvites }) => {
   const [newFamilyName, setNewFamilyName] = useState('');
   const [isAddingFamily, setIsAddingFamily] = useState(false);
   const [selectedFamily, setSelectedFamily] = useState<Family | null>(null);
@@ -285,6 +286,28 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
           <View style={styles.settingLeft}>
             <View style={[styles.settingIcon, { backgroundColor: '#fee2e2' }]}><Icon name="log-out-outline" size={16} color="#ef4444" /></View>
             <Text style={[styles.settingLabel, { color: '#ef4444' }]}>Abmelden</Text>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.settingRow}
+          onPress={() => {
+            Alert.alert(
+              "Konto löschen",
+              "Bist du sicher? Alle deine Gutscheine und Daten werden unwiderruflich gelöscht.",
+              [
+                { text: "Abbrechen", style: "cancel" },
+                {
+                  text: "Konto löschen",
+                  style: "destructive",
+                  onPress: onDeleteAccount
+                }
+              ]
+            );
+          }}
+        >
+          <View style={styles.settingLeft}>
+            <View style={[styles.settingIcon, { backgroundColor: '#fee2e2' }]}><Icon name="trash-outline" size={16} color="#ef4444" /></View>
+            <Text style={[styles.settingLabel, { color: '#ef4444' }]}>Konto löschen</Text>
           </View>
         </TouchableOpacity>
       </View>

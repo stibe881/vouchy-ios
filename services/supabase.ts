@@ -49,6 +49,46 @@ export const supabaseService = {
     return data;
   },
 
+  deleteAccount: async (userId: string) => {
+    // Delete all user's vouchers (including their images)
+    const { data: vouchers } = await supabase
+      .from('vouchers')
+      .select('id, image_url, image_url_2')
+      .eq('user_id', userId);
+
+    if (vouchers) {
+      for (const voucher of vouchers) {
+        // Delete images from storage
+        if (voucher.image_url) {
+          const fileName = voucher.image_url.split('/').pop()?.split('?')[0];
+          if (fileName) await supabase.storage.from('vouchers').remove([fileName]);
+        }
+        if (voucher.image_url_2) {
+          const fileName = voucher.image_url_2.split('/').pop()?.split('?')[0];
+          if (fileName) await supabase.storage.from('vouchers').remove([fileName]);
+        }
+      }
+    }
+
+    // Delete vouchers
+    await supabase.from('vouchers').delete().eq('user_id', userId);
+
+    // Delete families created by user
+    await supabase.from('families').delete().eq('user_id', userId);
+
+    // Delete family invites
+    await supabase.from('family_invites').delete().eq('inviter_id', userId);
+
+    // Delete notifications
+    await supabase.from('notifications').delete().eq('user_id', userId);
+
+    // Delete profile
+    await supabase.from('profiles').delete().eq('id', userId);
+
+    // Sign out (user deletion requires admin API which is not available on client)
+    await supabase.auth.signOut();
+  },
+
   signOut: async () => {
     await supabase.auth.signOut();
     await supabase.auth.signOut();
