@@ -21,7 +21,10 @@
         "NSCameraUsageDescription": "Diese App benötigt Zugriff auf die Kamera, um Gutscheine zu scannen.",
         "NSPhotoLibraryUsageDescription": "Diese App benötigt Zugriff auf deine Fotos, um gespeicherte Gutscheine hochzuladen.",
         "NSFaceIDUsageDescription": "Diese App verwendet Face ID, um deine Gutscheine zu schützen.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "LSApplicationQueriesSchemes": [
+          "manusausflugfinder"
+        ]
       }
     },
     "android": {

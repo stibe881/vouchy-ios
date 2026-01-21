@@ -43,7 +43,14 @@ const TripSelectionModal: React.FC<TripSelectionModalProps> = ({ visible, onClos
                 )}
             </View>
             <View style={{ flex: 1 }}>
-                <Text style={[styles.itemTitle, selectedTripId === item.id && styles.itemTextSelected]}>{item.title}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={[styles.itemTitle, selectedTripId === item.id && styles.itemTextSelected]}>{item.title}</Text>
+                    {item.status && item.status !== 'published' && (
+                        <View style={{ backgroundColor: '#f59e0b', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff', textTransform: 'uppercase' }}>{item.status}</Text>
+                        </View>
+                    )}
+                </View>
                 <Text style={[styles.itemSubtitle, selectedTripId === item.id && styles.itemTextSelected]}>{item.destination}</Text>
             </View>
             {selectedTripId === item.id && <Icon name="checkmark" size={20} color="#fff" />}

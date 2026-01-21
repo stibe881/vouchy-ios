@@ -45,21 +45,38 @@ const VoucherDetail: React.FC<VoucherDetailProps> = ({ voucher, owner, family, f
     const storeUrl = 'https://apps.apple.com/app/id6755850765';
 
     try {
+      // Attempt to open directly first (bypass check effectively for dev) or check first
       const supported = await Linking.canOpenURL(url);
+
       if (supported) {
         await Linking.openURL(url);
       } else {
-        Alert.alert(
-          "AusflugFinder nicht installiert",
-          "Möchtest du die App installieren?",
-          [
-            { text: "Nein", style: "cancel" },
-            { text: "Ja", onPress: () => Linking.openURL(storeUrl) }
-          ]
-        );
+        // Fallback: Try to open anyway - sometimes canOpenURL returns false on dev builds
+        // If this fails, we catch it below.
+        try {
+          await Linking.openURL(url);
+        } catch (e) {
+          Alert.alert(
+            "AusflugFinder nicht installiert",
+            "Möchtest du die App installieren?",
+            [
+              { text: "Nein", style: "cancel" },
+              { text: "Ja", onPress: () => Linking.openURL(storeUrl) }
+            ]
+          );
+        }
       }
     } catch (err) {
       console.error(err);
+      // Final Catch
+      Alert.alert(
+        "AusflugFinder nicht installiert",
+        "Möchtest du die App installieren?",
+        [
+          { text: "Nein", style: "cancel" },
+          { text: "Ja", onPress: () => Linking.openURL(storeUrl) }
+        ]
+      );
     }
   };
 

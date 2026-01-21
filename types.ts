@@ -59,6 +59,7 @@ export interface Trip {
   destination: string;
   start_date?: string | null;
   image?: string | null;
+  status?: 'draft' | 'published' | 'archived';
 }
 
 export interface AppNotification {

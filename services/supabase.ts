@@ -480,9 +480,8 @@ export const supabaseService = {
     // Falls RLS aktiv ist, muss der User Zugriff haben.
     // Wir holen nur einfache Infos.
     const { data, error } = await supabase
-      .from('trips')
-      .select('id, title, destination, start_date, image')
-      // .eq('user_id', userId) // FILTER REMOVED FOR DEBUGGING
+      .from('ausfluege')
+      .select('id, title:name, destination:adresse') // Correctly map legacy columns. Remove non-existent 'image'/'status'
       .order('created_at', { ascending: false });
 
     if (error) {
