@@ -1,7 +1,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Voucher, Family, User, AppNotification, FamilyInvite } from '../types';
+import { Voucher, Family, User, AppNotification, FamilyInvite, Trip } from '../types';
 
 const supabaseUrl = 'https://iopejcjkmuievlaclecn.supabase.co/';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlvcGVqY2prbXVpZXZsYWNsZWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyMzU5MTMsImV4cCI6MjA4MTgxMTkxM30.JX9jp8tGCZ9oDMYfTFt3KF6h0P5UxzaTPUERgtV7G3Y';
@@ -112,6 +112,8 @@ export const supabaseService = {
     const { id, created_at, ...payload } = voucherData;
     // Sicherstellen, dass family_id null ist, wenn nicht valide
     if (!isUUID(payload.family_id)) payload.family_id = null;
+    // trip_id sollte number oder null sein
+    if (!payload.trip_id) payload.trip_id = null;
 
     const { data, error } = await supabase.from('vouchers').insert([payload]).select();
     if (error) throw error;
@@ -124,6 +126,7 @@ export const supabaseService = {
 
     // Datenbereinigung vor dem Senden an Supabase
     if (!isUUID(updateFields.family_id)) (updateFields as any).family_id = null;
+    if (!updateFields.trip_id) (updateFields as any).trip_id = null;
 
     const { data, error } = await supabase.from('vouchers').update(updateFields).eq('id', id).select();
     if (error) {
@@ -307,18 +310,41 @@ export const supabaseService = {
       await supabaseService.sendInviteEmail(inviteeEmail, inviterName || 'Jemand', familyName);
     }
 
+    // Attempt to create in-app notification if user exists
+    try {
+      // We need to find the user ID by email. Since we can't query auth.users from client,
+      // we check the public profiles table which should mirror users.
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', inviteeEmail.toLowerCase().trim())
+        .single();
+
+      if (profile) {
+        await supabaseService.saveNotification(profile.id, {
+          title: 'Einladung erhalten',
+          body: `${inviterName || 'Jemand'} hat dich zur Gruppe "${familyName}" eingeladen.`,
+          type: 'info'
+        });
+      }
+    } catch (e) {
+      // Ignore error if profile lookup fails (user might not exist yet)
+    }
+
     return data as FamilyInvite;
   },
 
-  getPendingInvitesForUser: async (userEmail: string): Promise<FamilyInvite[]> => {
-    const { data, error } = await supabase
+  deleteInvite: async (inviteId: string) => {
+    const { error } = await supabase.from('family_invites').delete().eq('id', inviteId);
+    if (error) throw error;
+  },
+
+  getPendingInvitesForUser: async (email: string): Promise<FamilyInvite[]> => {
+    // Fetch invites first
+    const { data: invites, error } = await supabase
       .from('family_invites')
-      .select(`
-        *,
-        families:family_id (name),
-        profiles:inviter_id (name)
-      `)
-      .eq('invitee_email', userEmail.toLowerCase())
+      .select('*, families:family_id (name)')
+      .eq('invitee_email', email.toLowerCase())
       .eq('status', 'pending');
 
     if (error) {
@@ -326,10 +352,31 @@ export const supabaseService = {
       return [];
     }
 
-    return (data || []).map((invite: any) => ({
+    if (!invites || invites.length === 0) return [];
+
+    // Manually fetch missing inviter names if relation not found
+    // Or just use the ones we have? The error said FK missing.
+    // We can try to fetch profiles for the inviter_ids
+    const inviterIds = [...new Set(invites.map((i: any) => i.inviter_id).filter(Boolean))];
+
+    let profilesMap: Record<string, string> = {};
+    if (inviterIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, name')
+        .in('id', inviterIds);
+
+      if (profiles) {
+        profiles.forEach((p: any) => {
+          profilesMap[p.id] = p.name;
+        });
+      }
+    }
+
+    return invites.map((invite: any) => ({
       ...invite,
       family_name: invite.families?.name,
-      inviter_name: invite.profiles?.name
+      inviter_name: profilesMap[invite.inviter_id] || 'Jemand'
     })) as FamilyInvite[];
   },
 
@@ -401,5 +448,47 @@ export const supabaseService = {
       .eq('id', familyId);
 
     if (updateError) throw updateError;
+  },
+
+  removeMemberFromFamily: async (familyId: string, memberId: string) => {
+    // Get the family
+    const { data: family, error: fetchError } = await supabase
+      .from('families')
+      .select('*')
+      .eq('id', familyId)
+      .single();
+
+    if (fetchError || !family) throw fetchError || new Error('Family not found');
+
+    const updatedMembers = (family.members || []).filter((m: any) => m.id !== memberId);
+
+    const { error: updateError } = await supabase
+      .from('families')
+      .update({
+        members: updatedMembers,
+        member_count: updatedMembers.length
+      })
+      .eq('id', familyId);
+
+    if (updateError) throw updateError;
+  },
+
+
+  // ===== TRIPS Integration =====
+  getTrips: async (userId: string) => {
+    // Da wir in derselben DB sind, können wir direkt auf trips zugreifen.
+    // Falls RLS aktiv ist, muss der User Zugriff haben.
+    // Wir holen nur einfache Infos.
+    const { data, error } = await supabase
+      .from('trips')
+      .select('id, title, destination, start_date, image')
+      // .eq('user_id', userId) // FILTER REMOVED FOR DEBUGGING
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error("Error fetching trips:", error);
+      return [];
+    }
+    return (data || []) as Trip[];
   }
 };

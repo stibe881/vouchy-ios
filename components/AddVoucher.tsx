@@ -2,29 +2,32 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Image, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Voucher, Family, VoucherType } from '../types';
+import { Voucher, Family, VoucherType, Trip, User } from '../types';
 import { supabaseService } from '../services/supabase';
 import Icon from './Icon';
+import TripSelectionModal from './TripSelectionModal';
 
 // Dynamic import to prevent crash in Expo Go
 let DocumentScanner: any = null;
 try {
   DocumentScanner = require('react-native-document-scanner-plugin').default;
 } catch (e) {
-  console.log('DocumentScanner not available (Expo Go)');
+  console.error('DocumentScanner loading failed:', e);
 }
 
 interface AddVoucherProps {
   families: Family[];
+  currentUser: User | null;
   onCancel: () => void;
   onSave: (v: Omit<Voucher, 'id'>) => void;
 }
 
 const CURRENCIES = ['CHF', 'EUR', 'USD', 'GBP'];
 
-const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) => {
+const AddVoucher: React.FC<AddVoucherProps> = ({ families, currentUser, onCancel, onSave }) => {
   const [title, setTitle] = useState('');
   const [store, setStore] = useState('');
+  const [category, setCategory] = useState('Shopping');
   const [type, setType] = useState<VoucherType>('VALUE');
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState('CHF');
@@ -39,6 +42,21 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [showSecondPageModal, setShowSecondPageModal] = useState(false);
   const [pendingFirstImage, setPendingFirstImage] = useState<{ base64: string, uri: string } | null>(null);
+
+  const [trips, setTrips] = useState<Trip[]>([]); // New Trip State
+  const [selectedTripId, setSelectedTripId] = useState<number | null>(null);
+  const [showTripModal, setShowTripModal] = useState(false);
+
+  // Load trips on mount
+  React.useEffect(() => {
+    if (currentUser?.id) {
+      console.log('Loading trips for user:', currentUser.id);
+      supabaseService.getTrips(currentUser.id).then(data => {
+        console.log('Loaded trips:', data.length);
+        setTrips(data);
+      });
+    }
+  }, [currentUser]);
 
   const [showScanModal, setShowScanModal] = useState(false);
   const [scannedData, setScannedData] = useState<{
@@ -95,6 +113,7 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
       remaining_amount: numericAmount,
       currency: type === 'VALUE' ? currency : 'x',
       expiry_date: convertDateToISO(expiry),
+      category,
       code: code.trim(),
       pin: pin.trim(),
       website: website.trim(),
@@ -103,7 +122,8 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
       image_url_2: imageUrl2,
       created_at: new Date().toISOString(),
       user_id: '',
-      history: []
+      history: [],
+      trip_id: selectedTripId // New Field
     });
   };
 
@@ -121,6 +141,19 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
       });
 
       if (result?.scannedImages && result.scannedImages.length > 0) {
+        // If user scanned multiple pages in one go
+        if (result.scannedImages.length >= 2) {
+          const uri1 = result.scannedImages[0];
+          const uri2 = result.scannedImages[1];
+
+          const FileSystem = require('expo-file-system/legacy'); // or 'expo-file-system'
+          const base64_1 = await FileSystem.readAsStringAsync(uri1, { encoding: 'base64' });
+          const base64_2 = await FileSystem.readAsStringAsync(uri2, { encoding: 'base64' });
+
+          await processMultipleImages(base64_1, base64_2, uri1, uri2);
+          return;
+        }
+
         const scannedUri = result.scannedImages[0];
 
         // Read base64 from scanned image
@@ -153,10 +186,32 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
 
   const pickImage = async (source: 'camera' | 'gallery', isSecondPage: boolean = false) => {
     try {
+      console.log('Picking image details:', { source, hasScanner: !!DocumentScanner });
+
+      // PERMISSION CHECK
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          alert('Kamera-Berechtigung ist erforderlich, um Gutscheine zu scannen.');
+          return;
+        }
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          alert('Galerie-Berechtigung ist erforderlich, um Bilder auszuwählen.');
+          return;
+        }
+      }
+
       // Use document scanner for camera on native if available
-      if (source === 'camera' && DocumentScanner) {
-        await scanDocument(isSecondPage);
-        return;
+      if (source === 'camera') {
+        if (DocumentScanner) {
+          await scanDocument(isSecondPage);
+          return;
+        } else {
+          // Optional: Notify user that scanner is missing
+          console.log('DocumentScanner is null, falling back to standard camera');
+        }
       }
 
       // Fallback to regular camera or gallery picker
@@ -186,9 +241,9 @@ const AddVoucher: React.FC<AddVoucherProps> = ({ families, onCancel, onSave }) =
           }
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Fehler beim Bildwählen:", e);
-      alert("Fehler beim Laden des Bildes.");
+      alert("Fehler beim Laden des Bildes: " + (e.message || 'Unbekannt'));
     }
   };
 
@@ -339,6 +394,21 @@ ACHTE BESONDERS AUF:
           </View>
 
           <View style={styles.inputGroup}>
+            <Text style={styles.label}>Kategorie</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {['Shopping', 'Lebensmittel', 'Wohnen', 'Reisen', 'Freizeit', 'Sonstiges'].map(cat => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.familyItem, category === cat && styles.familyItemActive]}
+                  onPress={() => setCategory(cat)}
+                >
+                  <Text style={[styles.familyItemText, category === cat && styles.familyItemTextActive]}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.inputGroup}>
             <Text style={styles.label}>Gutscheintyp</Text>
             <View style={styles.familySelect}>
               <TouchableOpacity style={[styles.familyItem, type === 'VALUE' && styles.familyItemActive]} onPress={() => setType('VALUE')}>
@@ -398,6 +468,29 @@ ACHTE BESONDERS AUF:
             </View>
           </View>
 
+          {/* New Trip Selection */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Ausflug verknüpfen</Text>
+            <TouchableOpacity
+              style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+              onPress={() => setShowTripModal(true)}
+            >
+              <Text style={{ color: selectedTripId ? '#1e293b' : '#94a3b8', fontSize: 16 }}>
+                {selectedTripId ? trips.find(t => t.id === selectedTripId)?.title : 'Ausflug wählen...'}
+              </Text>
+              <Icon name="chevron-down" size={20} color="#94a3b8" />
+            </TouchableOpacity>
+          </View>
+
+          <TripSelectionModal
+            visible={showTripModal}
+            onClose={() => setShowTripModal(false)}
+            onSelect={(trip) => setSelectedTripId(trip ? trip.id : null)}
+            trips={trips}
+            selectedTripId={selectedTripId}
+          />
+
+
           <TouchableOpacity style={styles.saveButton} onPress={handleSubmit}>
             <Text style={styles.saveButtonText}>Gutschein speichern</Text>
           </TouchableOpacity>
@@ -417,7 +510,7 @@ ACHTE BESONDERS AUF:
             ))}
           </View>
         </TouchableOpacity>
-      </Modal>
+      </Modal >
 
       {/* Scan Preview Modal */}
       <Modal visible={showScanModal} transparent animationType="slide">
@@ -466,7 +559,7 @@ ACHTE BESONDERS AUF:
             </View>
           </View>
         </View>
-      </Modal>
+      </Modal >
 
       {/* Second Page Modal */}
       <Modal visible={showSecondPageModal} transparent animationType="fade">

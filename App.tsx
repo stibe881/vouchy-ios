@@ -181,7 +181,7 @@ const App: React.FC = () => {
               loadError={loadError} userName={auth.user?.name}
             />
           )}
-          {view === 'add' && <AddVoucher families={families} onCancel={() => setView('dashboard')} onSave={async (v) => {
+          {view === 'add' && <AddVoucher families={families} currentUser={auth.user} onCancel={() => setView('dashboard')} onSave={async (v) => {
             try {
               console.log('Saving voucher:', v);
               const saved = await supabaseService.saveVoucher({ ...v, user_id: auth.user!.id });

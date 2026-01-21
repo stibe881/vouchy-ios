@@ -46,8 +46,19 @@ export interface Voucher {
   code?: string;
   pin?: string;
   website?: string;
+  notes?: string;
+  category?: string;
   image_url_2?: string | null;
   history?: Redemption[]; // Neu: Verlauf der Einlösungen
+  trip_id?: number | null; // Verknüpfung zu einem Ausflug
+}
+
+export interface Trip {
+  id: number;
+  title: string;
+  destination: string;
+  start_date?: string | null;
+  image?: string | null;
 }
 
 export interface AppNotification {

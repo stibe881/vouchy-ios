@@ -24,6 +24,9 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [filterFamily, setFilterFamily] = useState<string | null>(null);
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   // Redemption Modal State
   const [showRedeemModal, setShowRedeemModal] = useState(false);
@@ -44,8 +47,10 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
 
   const filteredAndSortedVouchers = useMemo(() => {
     let result = vouchers.filter(v =>
-      v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      v.store.toLowerCase().includes(searchQuery.toLowerCase())
+      (v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        v.store.toLowerCase().includes(searchQuery.toLowerCase())) &&
+      (!filterFamily || v.family_id === filterFamily) &&
+      (!filterCategory || v.category === filterCategory)
     );
 
     switch (sortBy) {
@@ -59,34 +64,33 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
         result.sort((a, b) => {
           if (!a.expiry_date) return 1;
           if (!b.expiry_date) return -1;
-          return a.expiry_date.localeCompare(b.expiry_date);
+          return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
         });
         break;
       case 'newest':
       default:
-        result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        result.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
         break;
     }
+
     return result;
-  }, [vouchers, searchQuery, sortBy]);
+  }, [vouchers, searchQuery, sortBy, filterFamily, filterCategory]);
 
   const handleRefresh = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-      if (onRefresh) await onRefresh();
-    } finally {
+    if (onRefresh) {
+      setRefreshing(true);
+      await onRefresh();
       setRefreshing(false);
     }
   };
 
-  const useVoucher = (voucher: Voucher) => {
+  const handleRedeem = (voucher: Voucher) => {
     setRedeemVoucher(voucher);
-    setRedeemAmount(voucher.type === 'QUANTITY' ? '1' : ''); // Default 1 for quantity
+    setRedeemAmount('');
     setShowRedeemModal(true);
   };
 
-  const handleRedeemConfirm = async () => {
+  const processRedemption = async () => {
     if (!redeemVoucher || !redeemAmount.trim()) return;
 
     const val = parseFloat(redeemAmount.replace(',', '.'));
@@ -130,49 +134,105 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
     }
   };
 
+  const activeFiltersCount = (filterFamily ? 1 : 0) + (filterCategory ? 1 : 0);
+
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Guten Tag, {userName || 'Benutzer'}</Text>
-          <Text style={styles.title}>Gutscheine</Text>
+          <Text style={styles.greeting}>Gutscheine</Text>
+          <Text style={styles.date}>{vouchers.length} Verfügbar</Text>
         </View>
-        <TouchableOpacity style={[styles.actionBtn, styles.notificationBtn]} onPress={onOpenNotifications}>
-          <Icon name="notifications-outline" size={22} color="#1e293b" />
-          {unreadCount > 0 && (
-            <View style={styles.unreadBadge}><Text style={styles.unreadBadgeText}>{unreadCount}</Text></View>
-          )}
+        <TouchableOpacity style={styles.notificationBtn} onPress={onOpenNotifications}>
+          <Icon name="notifications-outline" size={24} color="#0f172a" />
+          {unreadCount > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{unreadCount}</Text></View>}
         </TouchableOpacity>
       </View>
 
       <View style={styles.filterContainer}>
-        <View style={styles.searchBar}>
-          <Icon name="search-outline" size={18} color="#94a3b8" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Suchen..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholderTextColor="#94a3b8"
-          />
+        <View style={styles.searchRow}>
+          <View style={styles.searchBar}>
+            <Icon name="search-outline" size={18} color="#94a3b8" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Suchen..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholderTextColor="#94a3b8"
+            />
+          </View>
+          <TouchableOpacity
+            style={[styles.filterToggleBtn, (showFilters || activeFiltersCount > 0) && styles.filterToggleBtnActive]}
+            onPress={() => setShowFilters(!showFilters)}
+          >
+            <Icon name="options-outline" size={20} color={showFilters || activeFiltersCount > 0 ? "#fff" : "#64748b"} />
+            {activeFiltersCount > 0 && !showFilters && (
+              <View style={styles.filterBadge}><Text style={styles.filterBadgeText}>{activeFiltersCount}</Text></View>
+            )}
+          </TouchableOpacity>
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sortScroll}>
-          {[
-            { id: 'newest', label: 'Neueste', icon: 'time-outline' },
-            { id: 'alphabetical', label: 'A-Z', icon: 'text-outline' },
-            { id: 'amount', label: 'Betrag', icon: 'card-outline' },
-            { id: 'expiry', label: 'Ablauf', icon: 'calendar-outline' }
-          ].map(opt => (
-            <TouchableOpacity
-              key={opt.id}
-              onPress={() => setSortBy(opt.id as SortOption)}
-              style={[styles.sortChip, sortBy === opt.id && styles.sortChipActive]}
-            >
-              <Icon name={opt.icon} size={14} color={sortBy === opt.id ? '#fff' : '#64748b'} />
-              <Text style={[styles.sortChipText, sortBy === opt.id && styles.sortChipTextActive]}>{opt.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+
+        {showFilters && (
+          <View style={styles.filtersPanel}>
+            <Text style={styles.filterSectionLabel}>Sortierung</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterGroupScroll}>
+              {[
+                { id: 'newest', label: 'Neueste', icon: 'time-outline' },
+                { id: 'alphabetical', label: 'A-Z', icon: 'text-outline' },
+                { id: 'amount', label: 'Betrag', icon: 'card-outline' },
+                { id: 'expiry', label: 'Ablauf', icon: 'calendar-outline' }
+              ].map(opt => (
+                <TouchableOpacity
+                  key={opt.id}
+                  onPress={() => setSortBy(opt.id as SortOption)}
+                  style={[styles.sortChip, sortBy === opt.id && styles.sortChipActive]}
+                >
+                  <Icon name={opt.icon} size={14} color={sortBy === opt.id ? '#fff' : '#64748b'} />
+                  <Text style={[styles.sortChipText, sortBy === opt.id && styles.sortChipTextActive]}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={styles.filterSectionLabel}>Familie</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterGroupScroll}>
+              <TouchableOpacity
+                style={[styles.sortChip, !filterFamily && styles.sortChipActive]}
+                onPress={() => setFilterFamily(null)}
+              >
+                <Text style={[styles.sortChipText, !filterFamily && styles.sortChipTextActive]}>Alle</Text>
+              </TouchableOpacity>
+              {families.map(f => (
+                <TouchableOpacity
+                  key={f.id}
+                  style={[styles.sortChip, filterFamily === f.id && styles.sortChipActive]}
+                  onPress={() => setFilterFamily(filterFamily === f.id ? null : f.id)}
+                >
+                  <Text style={[styles.sortChipText, filterFamily === f.id && styles.sortChipTextActive]}>{f.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={styles.filterSectionLabel}>Kategorie</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterGroupScroll}>
+              <TouchableOpacity
+                style={[styles.sortChip, !filterCategory && styles.sortChipActive]}
+                onPress={() => setFilterCategory(null)}
+              >
+                <Text style={[styles.sortChipText, !filterCategory && styles.sortChipTextActive]}>Alle</Text>
+              </TouchableOpacity>
+              {['Shopping', 'Lebensmittel', 'Wohnen', 'Reisen', 'Freizeit', 'Sonstiges'].map(cat => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.sortChip, filterCategory === cat && styles.sortChipActive]}
+                  onPress={() => setFilterCategory(filterCategory === cat ? null : cat)}
+                >
+                  <Text style={[styles.sortChipText, filterCategory === cat && styles.sortChipTextActive]}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
       </View>
 
       <ScrollView
@@ -266,7 +326,7 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowRedeemModal(false)}>
                 <Text style={styles.modalCancelText}>Abbrechen</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirmBtn} onPress={handleRedeemConfirm}>
+              <TouchableOpacity style={styles.modalConfirmBtn} onPress={processRedemption}>
                 <Text style={styles.modalConfirmText}>Bestätigen</Text>
               </TouchableOpacity>
             </View>
@@ -278,45 +338,64 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
 };
 
 const styles = StyleSheet.create({
-  header: { marginBottom: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 },
-  greeting: { fontSize: 13, color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
-  title: { fontSize: 32, fontWeight: '900', color: '#0f172a' },
-  actionBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
-  notificationBtn: { position: 'relative' },
-  unreadBadge: { position: 'absolute', top: 10, right: 10, backgroundColor: '#ef4444', minWidth: 16, height: 16, borderRadius: 8, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
-  unreadBadgeText: { color: '#fff', fontSize: 8, fontWeight: '900' },
-  filterContainer: { marginBottom: 20 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 15, height: 50, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 5 },
-  searchInput: { flex: 1, marginLeft: 10, fontSize: 15, color: '#1e293b' },
-  sortScroll: { flexDirection: 'row' },
+  container: { flex: 1, backgroundColor: '#f9fafb' },
+  header: { paddingHorizontal: 20, paddingTop: 10, marginBottom: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  greeting: { fontSize: 13, color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  date: { fontSize: 24, fontWeight: '900', color: '#0f172a' },
+
+  // Header Action Buttons
+  notificationBtn: { width: 44, height: 44, backgroundColor: '#fff', borderRadius: 14, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5 },
+  badge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#ef4444', minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#f9fafb' },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+
+  filterContainer: { paddingHorizontal: 20, marginBottom: 15 },
+  searchRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 16, height: 50, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5 },
+  searchInput: { flex: 1, marginLeft: 10, fontSize: 16, color: '#1e293b' },
+  filterToggleBtn: { width: 50, height: 50, borderRadius: 16, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5 },
+  filterToggleBtnActive: { backgroundColor: '#2563eb' },
+  filterBadge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#ef4444', minWidth: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#f9fafb' },
+  filterBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+
+  filtersPanel: { backgroundColor: '#fff', borderRadius: 20, padding: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10 },
+  filterSectionLabel: { fontSize: 11, fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8, marginTop: 4 },
+  filterGroupScroll: { marginBottom: 15 },
+
+  sortScroll: { marginBottom: 0 },
   sortChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, marginRight: 8 },
   sortChipActive: { backgroundColor: '#2563eb' },
-  sortChipText: { fontSize: 13, fontWeight: '700', color: '#64748b', marginLeft: 6 },
+  sortChipText: { fontSize: 13, fontWeight: '600', color: '#64748b', marginLeft: 6 },
   sortChipTextActive: { color: '#fff' },
-  list: { paddingBottom: 20 },
-  card: { backgroundColor: '#fff', borderRadius: 28, padding: 24, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 15, elevation: 2, position: 'relative', overflow: 'hidden' },
-  familyBadge: { position: 'absolute', top: 0, right: 0, backgroundColor: '#eff6ff', paddingHorizontal: 12, paddingVertical: 8, borderBottomLeftRadius: 16, flexDirection: 'row', alignItems: 'center' },
-  familyBadgeText: { fontSize: 9, fontWeight: '800', color: '#2563eb' },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  iconBox: { width: 52, height: 52, backgroundColor: '#f1f5f9', borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginRight: 16 },
-  titleBox: { flex: 1 },
-  voucherTitle: { fontSize: 18, fontWeight: '800', color: '#1e293b' },
-  voucherStore: { fontSize: 14, color: '#64748b', marginTop: 2 },
+
+  list: { paddingHorizontal: 20, gap: 15 },
+  card: { backgroundColor: '#fff', borderRadius: 24, padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 3 },
+  familyBadge: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#eff6ff', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, marginBottom: 12 },
+  familyBadgeText: { fontSize: 11, fontWeight: '700', color: '#2563eb' },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  iconBox: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center' },
   amountBox: { alignItems: 'flex-end' },
+  amount: { fontSize: 20, fontWeight: '900', color: '#0f172a' },
   amountText: { fontSize: 20, fontWeight: '900', color: '#0f172a' },
   currencyText: { fontSize: 12, color: '#94a3b8' },
+
+  titleBox: { flex: 1, paddingHorizontal: 15 },
+  voucherTitle: { fontSize: 16, fontWeight: '700', color: '#1e293b', marginBottom: 2 },
+  voucherStore: { fontSize: 13, color: '#64748b', fontWeight: '500' },
+
   progressBarContainer: { height: 6, backgroundColor: '#f1f5f9', borderRadius: 3, marginBottom: 20, overflow: 'hidden' },
   progressBar: { height: '100%' },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  footerLabel: { fontSize: 9, fontWeight: '800', color: '#94a3b8' },
+  footerLabel: { fontSize: 9, fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase' },
   footerValue: { fontSize: 13, fontWeight: '700', color: '#334155', marginTop: 2 },
   expiryHighlight: { color: '#2563eb' },
   useButton: { backgroundColor: '#0f172a', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 14 },
   useButtonText: { color: '#fff', fontSize: 13, fontWeight: '800' },
+
   emptyContainer: { alignItems: 'center', marginTop: 40 },
   emptyText: { fontSize: 16, fontWeight: '600', color: '#94a3b8', marginTop: 10 },
   errorBox: { flexDirection: 'row', backgroundColor: '#fff1f2', padding: 15, borderRadius: 16, marginBottom: 20, alignItems: 'center' },
   errorText: { color: '#e11d48', fontSize: 13, fontWeight: '600' },
+
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
   modalContent: { backgroundColor: '#fff', width: '85%', borderRadius: 24, padding: 24, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 20, elevation: 5 },
   modalTitle: { fontSize: 20, fontWeight: '900', color: '#0f172a', marginBottom: 4, textAlign: 'center' },

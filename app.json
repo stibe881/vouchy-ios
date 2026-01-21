@@ -53,6 +53,12 @@
         {
           "sounds": []
         }
+      ],
+      [
+        "react-native-document-scanner-plugin",
+        {
+          "cameraPermission": "Diese App benötigt Zugriff auf die Kamera, um Gutscheine zu scannen."
+        }
       ]
     ],
     "scheme": "vouchervault"
