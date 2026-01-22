@@ -477,10 +477,10 @@ export const supabaseService = {
   // ===== TRIPS Integration =====
   getTrips: async (userId: string) => {
     // Da wir in derselben DB sind, können wir direkt auf trips zugreifen.
-    // Wir holen nur einfache Infos + das erste Foto
-    const { data, error } = await supabase
+    // FK-Relationship scheint nicht via REST exposed zu sein, daher erstmal ohne Fotos um Crash zu fixen
+    const { data: trips, error } = await supabase
       .from('ausfluege')
-      .select('id, title:name, destination:adresse, ausfluege_fotos(full_url)')
+      .select('id, title:name, destination:adresse')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -488,12 +488,30 @@ export const supabaseService = {
       return [];
     }
 
+    // Manueller Fetch der Fotos für diese Trips (Workaround für fehlenden FK)
+    const tripIds = trips.map((t: any) => t.id);
+    let photoMap: Record<number, string> = {};
+
+    if (tripIds.length > 0) {
+      const { data: photos } = await supabase
+        .from('ausfluege_fotos')
+        .select('ausflug_id, full_url')
+        .in('ausflug_id', tripIds)
+        .eq('is_primary', true);
+
+      if (photos) {
+        photos.forEach((p: any) => {
+          photoMap[p.ausflug_id] = p.full_url;
+        });
+      }
+    }
+
     // Map result to Trip type
-    return (data || []).map((t: any) => ({
+    return (trips || []).map((t: any) => ({
       id: t.id,
       title: t.title,
       destination: t.destination,
-      image: t.ausfluege_fotos?.[0]?.full_url || null
+      image: photoMap[t.id] || null
     })) as Trip[];
   }
 };

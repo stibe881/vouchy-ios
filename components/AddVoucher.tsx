@@ -472,12 +472,23 @@ ACHTE BESONDERS AUF:
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Ausflug verknüpfen</Text>
             <TouchableOpacity
-              style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+              style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: selectedTripId ? 10 : 20 }]}
               onPress={() => setShowTripModal(true)}
             >
-              <Text style={{ color: selectedTripId ? '#1e293b' : '#94a3b8', fontSize: 16 }}>
-                {selectedTripId ? trips.find(t => t.id === selectedTripId)?.title : 'Ausflug wählen...'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                {selectedTripId && (
+                  (() => {
+                    const trip = trips.find(t => t.id === selectedTripId);
+                    if (trip && trip.image) {
+                      return <Image source={{ uri: trip.image }} style={{ width: 32, height: 32, borderRadius: 6, marginRight: 10 }} />;
+                    }
+                    return <Icon name="map" size={20} color="#2563eb" style={{ marginRight: 10 }} />;
+                  })()
+                )}
+                <Text style={{ color: selectedTripId ? '#1e293b' : '#94a3b8', fontSize: 16, flex: 1 }} numberOfLines={1}>
+                  {selectedTripId ? trips.find(t => t.id === selectedTripId)?.title : 'Ausflug wählen...'}
+                </Text>
+              </View>
               <Icon name="chevron-down" size={20} color="#94a3b8" />
             </TouchableOpacity>
           </View>

@@ -55,7 +55,7 @@ const Dashboard: React.FC<DashboardProps> = ({ vouchers, families, notifications
 
     switch (sortBy) {
       case 'alphabetical':
-        result.sort((a, b) => a.title.localeCompare(b.title));
+        result.sort((a, b) => a.store.localeCompare(b.store));
         break;
       case 'amount':
         result.sort((a, b) => b.remaining_amount - a.remaining_amount);
