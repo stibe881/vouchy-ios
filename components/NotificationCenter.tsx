@@ -8,9 +8,10 @@ interface NotificationCenterProps {
   notifications: AppNotification[];
   onBack: () => void;
   onClearAll: () => void;
+  onMarkAsRead: (id: string) => void;
 }
 
-const NotificationCenter: React.FC<NotificationCenterProps> = ({ notifications, onBack, onClearAll }) => {
+const NotificationCenter: React.FC<NotificationCenterProps> = ({ notifications, onBack, onClearAll, onMarkAsRead }) => {
   const getIconForType = (type: string) => {
     switch (type) {
       case 'success': return { name: 'checkmark-circle', color: '#10b981' };
@@ -42,7 +43,12 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ notifications, 
           notifications.map(item => {
             const icon = getIconForType(item.type);
             return (
-              <View key={item.id} style={[styles.notificationCard, !item.read && styles.unreadCard]}>
+              <TouchableOpacity
+                key={item.id}
+                style={[styles.notificationCard, !item.read && styles.unreadCard]}
+                onPress={() => onMarkAsRead(item.id)}
+                activeOpacity={0.7}
+              >
                 <View style={[styles.iconBox, { backgroundColor: icon.color + '10' }]}>
                   <Icon name={icon.name} size={22} color={icon.color} />
                 </View>
@@ -54,7 +60,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ notifications, 
                   <Text style={styles.notifBody}>{item.body}</Text>
                 </View>
                 {!item.read && <View style={styles.unreadDot} />}
-              </View>
+              </TouchableOpacity>
             );
           })
         )}

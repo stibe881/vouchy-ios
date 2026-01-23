@@ -171,13 +171,63 @@ export const supabaseService = {
 
   getFamilies: async (userId: string) => {
     if (!userId) return [];
-    const { data, error } = await supabase.from('families').select('*').eq('user_id', userId);
-    if (error) return [];
-    return (data || []) as Family[];
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      // Fetch all families where the user is in the members JSON array
+      // We use a raw filter because PostgREST syntax for JSON containment is tricky in JS client
+      // Actually, we can use the 'View families' policy we just set up basically
+      // But we want to filter out "Invited but not accepted" cases if RLS returns them.
+
+      // Let's use the policy-filtered selection, but then filter in-memory for 'accepted' membership
+      // Or better: Use the @> query operator for JSONb.
+
+      const { data, error } = await supabase
+        .from('families')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // In-memory filter to strictly only show Joined families (not just invited ones)
+      // RLS might return requested families too.
+      const myFamilies = (data || []).filter((f: any) => {
+        const members = f.members || [];
+        // Check if I am in the members list
+        return members.some((m: any) => m.email?.toLowerCase() === user?.email?.toLowerCase());
+      });
+
+      return myFamilies as Family[];
+    } catch (e) {
+      console.error('Error fetching families:', e);
+      return [];
+    }
   },
 
   saveFamily: async (familyData: any) => {
-    const { data, error } = await supabase.from('families').insert([familyData]).select();
+    // Ensure the creator is added as the first member
+    const { data: { user } } = await supabase.auth.getUser();
+
+    // Fetch profile name to be nice
+    let userName = user?.email?.split('@')[0] || 'Admin';
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('name').eq('id', user.id).single();
+      if (profile?.name) userName = profile.name;
+    }
+
+    const initialMember = {
+      id: user?.id || 'owner',
+      email: user?.email?.toLowerCase(),
+      name: userName
+    };
+
+    const payload = {
+      ...familyData,
+      members: [initialMember],
+      member_count: 1
+    };
+
+    const { data, error } = await supabase.from('families').insert([payload]).select();
     if (error) throw error;
     return data[0] as Family;
   },
@@ -225,6 +275,11 @@ export const supabaseService = {
   markNotificationsAsRead: async (userId: string) => {
     if (!userId) return;
     await supabase.from('notifications').update({ read: true }).eq('user_id', userId);
+  },
+
+  markNotificationAsRead: async (notificationId: string) => {
+    if (!notificationId) return;
+    await supabase.from('notifications').update({ read: true }).eq('id', notificationId);
   },
 
   updatePassword: async (password: string) => {
@@ -293,7 +348,8 @@ export const supabaseService = {
   },
 
   createInvite: async (familyId: string, inviterId: string, inviteeEmail: string, inviterName?: string, familyName?: string) => {
-    const { data, error } = await supabase
+    console.log('[createInvite] Starting invite for:', inviteeEmail);
+    const { data: inviteData, error } = await supabase
       .from('family_invites')
       .insert([{
         family_id: familyId,
@@ -303,35 +359,67 @@ export const supabaseService = {
       }])
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      console.error('[createInvite] DB Error:', error);
+      throw error;
+    }
 
     // Send email notification to invitee
     if (familyName) {
-      await supabaseService.sendInviteEmail(inviteeEmail, inviterName || 'Jemand', familyName);
+      // Intentionally not awaiting to speed up response, or await if critical? Await to ensure it's sent.
+      try {
+        await supabaseService.sendInviteEmail(inviteeEmail, inviterName || 'Jemand', familyName);
+      } catch (e) {
+        console.error('[createInvite] Email Error:', e);
+      }
     }
 
     // Attempt to create in-app notification if user exists
     try {
-      // We need to find the user ID by email. Since we can't query auth.users from client,
-      // we check the public profiles table which should mirror users.
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('id')
+        .select('id, push_token')
         .eq('email', inviteeEmail.toLowerCase().trim())
-        .single();
+        .maybeSingle(); // Use maybeSingle to avoid 406 if multiple (shouldn't happen) or RLS issues
+
+      if (profileError) {
+        console.error('[createInvite] Profile lookup error (likely RLS):', profileError);
+      }
 
       if (profile) {
+        console.log('[createInvite] Found profile:', profile.id);
+        const title = 'Einladung erhalten';
+        const body = `${inviterName || 'Jemand'} hat dich zur Gruppe "${familyName}" eingeladen.`;
+
+        // 1. In-App Notification
         await supabaseService.saveNotification(profile.id, {
-          title: 'Einladung erhalten',
-          body: `${inviterName || 'Jemand'} hat dich zur Gruppe "${familyName}" eingeladen.`,
+          title,
+          body,
           type: 'info'
         });
+        console.log('[createInvite] In-App Notification saved');
+
+        // 2. Push Notification
+        if (profile.push_token) {
+          console.log('[createInvite] Sending Push to:', profile.push_token);
+          const { sendPushNotification } = await import('./notifications'); // Dynamic import to avoid cycles if any
+          await sendPushNotification(profile.push_token, title, body, {
+            type: 'family_invitation',
+            familyId,
+            message: body
+          });
+          console.log('[createInvite] Push sent');
+        } else {
+          console.log('[createInvite] No push token for user');
+        }
+      } else {
+        console.log('[createInvite] No profile found for email (user might not be registered yet).');
       }
     } catch (e) {
-      // Ignore error if profile lookup fails (user might not exist yet)
+      console.error('[createInvite] Notification Error:', e);
     }
 
-    return data as FamilyInvite;
+    return inviteData as FamilyInvite;
   },
 
   deleteInvite: async (inviteId: string) => {
@@ -340,23 +428,37 @@ export const supabaseService = {
   },
 
   getPendingInvitesForUser: async (email: string): Promise<FamilyInvite[]> => {
-    // Fetch invites first
+    const searchEmail = email.toLowerCase().trim();
+    console.log('---------------------------------------------------');
+    console.log('[getPendingInvitesForUser] CALLED WITH:', email);
+    console.log('[getPendingInvitesForUser] SEARCHING DB FOR:', searchEmail);
+
+    // Fetch invites first (RLS IS DISABLED NOW, SO THIS SHOULD RETURN EVERYTHING IF SEARCH MATCHES)
     const { data: invites, error } = await supabase
       .from('family_invites')
       .select('*, families:family_id (name)')
-      .eq('invitee_email', email.toLowerCase())
+      .ilike('invitee_email', searchEmail)
       .eq('status', 'pending');
 
     if (error) {
-      console.error('Error fetching invites:', error);
+      console.error('[getPendingInvitesForUser] DB ERROR:', error);
       return [];
     }
 
+    console.log('[getPendingInvitesForUser] FOUND INVITES:', invites?.length);
+    if (invites && invites.length > 0) {
+      console.log('[getPendingInvitesForUser] FIRST INVITE:', invites[0]);
+    } else {
+      // DEBUG: Look for ANY invite to see if connectivity works
+      const { count } = await supabase.from('family_invites').select('*', { count: 'exact', head: true });
+      console.log('[getPendingInvitesForUser] TOTAL INVITES IN TABLE (ANY USER):', count);
+    }
+    console.log('---------------------------------------------------');
+
+    // ... rest of function ... including profile map
     if (!invites || invites.length === 0) return [];
 
-    // Manually fetch missing inviter names if relation not found
-    // Or just use the ones we have? The error said FK missing.
-    // We can try to fetch profiles for the inviter_ids
+    // Manually fetch missing inviter names
     const inviterIds = [...new Set(invites.map((i: any) => i.inviter_id).filter(Boolean))];
 
     let profilesMap: Record<string, string> = {};
@@ -395,7 +497,7 @@ export const supabaseService = {
     return (data || []) as FamilyInvite[];
   },
 
-  respondToInvite: async (inviteId: string, response: 'accepted' | 'rejected'): Promise<FamilyInvite> => {
+  respondToInvite: async (inviteId: string, response: 'accepted' | 'rejected'): Promise<FamilyInvite | null> => {
     const { data, error } = await supabase
       .from('family_invites')
       .update({
@@ -404,10 +506,10 @@ export const supabaseService = {
       })
       .eq('id', inviteId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
-    return data as FamilyInvite;
+    return data as FamilyInvite | null;
   },
 
   getInviterPushToken: async (inviterId: string): Promise<string | null> => {
@@ -422,36 +524,25 @@ export const supabaseService = {
   },
 
   addMemberToFamily: async (familyId: string, userEmail: string, userName: string) => {
-    // Get the family
-    const { data: family, error: fetchError } = await supabase
-      .from('families')
-      .select('*')
-      .eq('id', familyId)
-      .single();
+    const memberId = Math.random().toString(36).substr(2, 9);
 
-    if (fetchError || !family) throw fetchError || new Error('Family not found');
+    // Call the secure RPC function
+    // This avoids "permission denied" or "schema cache" errors from direct table updates by invitees
+    const { error } = await supabase.rpc('add_member_to_family', {
+      p_family_id: familyId,
+      p_email: userEmail.toLowerCase(),
+      p_name: userName || userEmail.split('@')[0],
+      p_member_id: memberId
+    });
 
-    const newMember = {
-      id: Math.random().toString(36).substr(2, 9),
-      email: userEmail.toLowerCase(),
-      name: userName || userEmail.split('@')[0]
-    };
-
-    const updatedMembers = [...(family.members || []), newMember];
-
-    const { error: updateError } = await supabase
-      .from('families')
-      .update({
-        members: updatedMembers,
-        member_count: updatedMembers.length + 1
-      })
-      .eq('id', familyId);
-
-    if (updateError) throw updateError;
+    if (error) {
+      console.error('RPC Error addMemberToFamily:', error);
+      throw error;
+    }
   },
 
   removeMemberFromFamily: async (familyId: string, memberId: string) => {
-    // Get the family
+    // ... existing ...
     const { data: family, error: fetchError } = await supabase
       .from('families')
       .select('*')
@@ -464,13 +555,28 @@ export const supabaseService = {
 
     const { error: updateError } = await supabase
       .from('families')
-      .update({
-        members: updatedMembers,
-        member_count: updatedMembers.length
-      })
+      .update({ members: updatedMembers, member_count: updatedMembers.length })
       .eq('id', familyId);
 
     if (updateError) throw updateError;
+  },
+
+  acceptInviteAtomic: async (inviteId: string, email: string, name: string) => {
+    // New V2 RPC call
+    const { data, error } = await supabase.rpc('handle_invite_acceptance', {
+      p_invite_id: inviteId,
+      p_user_email: email,
+      p_user_name: name
+    });
+
+    if (error) throw error;
+
+    // Check application-level success boolean
+    if (data && data.success === false) {
+      throw new Error(data.error || 'Acceptance failed');
+    }
+
+    return { data, error: null };
   },
 
 

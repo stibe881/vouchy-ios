@@ -81,32 +81,27 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
     setIsProcessingInvite(invite.id);
 
     try {
-      await supabaseService.respondToInvite(invite.id, response);
+      if (response === 'rejected') {
+        await supabaseService.respondToInvite(invite.id, 'rejected');
+        showNotification("Abgelehnt", `Einladung zu "${invite.family_name}" abgelehnt`);
+      } else {
+        // Use atomic RPC for accepting
+        const { error } = await supabaseService.acceptInviteAtomic(invite.id, user.email, user.name);
+        if (error) throw error;
 
-      // If accepted, add user to family
-      if (response === 'accepted') {
-        await supabaseService.addMemberToFamily(invite.family_id, user.email, user.name);
+        showNotification("Beigetreten!", `Du bist jetzt Mitglied von "${invite.family_name}"`);
       }
 
       // Send push notification to inviter
+      // ... existing notification logic matches ...
       const inviterToken = await supabaseService.getInviterPushToken(invite.inviter_id);
       if (inviterToken) {
-        await sendInviteResponseNotification(
-          inviterToken,
-          user.name,
-          invite.family_name || 'Gruppe',
-          response
-        );
+        await sendInviteResponseNotification(inviterToken, user.name, invite.family_name || 'Gruppe', response);
       }
 
       onRefreshInvites();
-      showNotification(
-        response === 'accepted' ? "Beigetreten!" : "Abgelehnt",
-        response === 'accepted'
-          ? `Du bist jetzt Mitglied von "${invite.family_name}"`
-          : `Einladung zu "${invite.family_name}" abgelehnt`
-      );
     } catch (error: any) {
+      console.error("Invite Error:", error);
       Alert.alert("Fehler", error.message || "Aktion fehlgeschlagen.");
     } finally {
       setIsProcessingInvite(null);

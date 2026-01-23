@@ -43,26 +43,54 @@ const App: React.FC = () => {
   const loadAllUserData = useCallback(async (userId: string) => {
     if (!userId) return;
     setLoadError(null);
+    console.log('[App] loadAllUserData called for:', userId);
     try {
+      // 1. Get current auth user first to ensure we have email
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      const userEmail = authUser?.email;
+
       const [vData, fData, nData, pData] = await Promise.all([
         supabaseService.getVouchers(userId),
         supabaseService.getFamilies(userId),
         supabaseService.getNotifications(userId),
         supabaseService.getProfile(userId)
       ]);
+
+      console.log('[App] Data loaded. Profile found:', !!pData, 'Email:', userEmail);
+
       setVouchers(vData);
       setFamilies(fData);
       setNotifications(nData);
-      if (pData) {
-        setAuth(prev => ({ ...prev, user: pData }));
-        // Load pending invites for this user's email
-        if (pData.email) {
-          const invites = await supabaseService.getPendingInvitesForUser(pData.email);
-          setPendingInvites(invites);
-        }
+
+      let currentUser = pData;
+      // If profile is missing but we have authUser, construct a fallback
+      if (!currentUser && authUser) {
+        currentUser = {
+          id: authUser.id,
+          email: authUser.email!,
+          name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Benutzer',
+          notifications_enabled: true
+        };
+        // Optional: Create profile if missing? 
+        // supabaseService.updateProfile(currentUser); 
       }
+
+      if (currentUser) {
+        setAuth(prev => ({ ...prev, user: currentUser }));
+      }
+
+      // Load pending invites - Use email from Auth if Profile email is missing
+      const emailToUse = currentUser?.email || userEmail;
+      if (emailToUse) {
+        console.log('[App] Fetching invites for:', emailToUse);
+        const invites = await supabaseService.getPendingInvitesForUser(emailToUse);
+        setPendingInvites(invites);
+      } else {
+        console.log('[App] No email found, skipping invite fetch');
+      }
+
     } catch (err: any) {
-      console.error("Fehler beim Laden:", err);
+      console.error("[App] Fehler beim Laden:", err);
       setLoadError("Daten konnten nicht vollständig geladen werden.");
     } finally {
       setAuth(prev => ({ ...prev, isLoading: false }));
@@ -308,7 +336,23 @@ const App: React.FC = () => {
               onUpdateVoucher={handleUpdateVoucher} onDeleteVoucher={handleDeleteVoucher}
             />
           )}
-          {view === 'notifications' && <NotificationCenter notifications={notifications} onBack={() => { supabaseService.markNotificationsAsRead(auth.user?.id || ''); setView('dashboard'); }} onClearAll={() => setNotifications([])} />}
+          {view === 'notifications' && (
+            <NotificationCenter
+              notifications={notifications}
+              onBack={() => {
+                // Don't mark all as read automatically anymore
+                setView('dashboard');
+              }}
+              onClearAll={() => {
+                supabaseService.markNotificationsAsRead(auth.user?.id || ''); // Clear implies read? Or delete? onClearAll sets state to []
+                setNotifications([]);
+              }}
+              onMarkAsRead={async (id) => {
+                await supabaseService.markNotificationAsRead(id);
+                setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+              }}
+            />
+          )}
         </View>
         {view !== 'detail' && view !== 'notifications' && <Navigation currentView={view === 'families' ? 'families' : (view === 'add' ? 'add' : 'dashboard')} setView={setView} />}
       </SafeAreaView>
