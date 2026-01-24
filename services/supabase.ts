@@ -97,10 +97,18 @@ export const supabaseService = {
 
   getVouchers: async (userId: string) => {
     if (!userId) return [];
+
+    // Get all families where user is a member
+    const userFamilies = await supabaseService.getFamilies(userId);
+    const familyIds = userFamilies.map(f => f.id);
+
+    // Fetch vouchers where EITHER:
+    // 1. user_id matches (own vouchers), OR
+    // 2. family_id is in user's families (shared family vouchers)
     const { data, error } = await supabase
       .from('vouchers')
       .select('*')
-      .eq('user_id', userId)
+      .or(`user_id.eq.${userId},family_id.in.(${familyIds.join(',')})`)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
