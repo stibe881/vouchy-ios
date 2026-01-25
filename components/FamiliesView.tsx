@@ -121,6 +121,17 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
   };
 
   const handleDeleteFamily = async (id: string) => {
+    const family = families.find(f => f.id === id);
+    const isOwner = family && user && family.user_id === user.id;
+
+    if (!isOwner) {
+      Alert.alert(
+        "Keine Berechtigung",
+        "Du kannst diese Gruppe nicht löschen, da du nicht der Ersteller bist. Du kannst die Gruppe nur verlassen."
+      );
+      return;
+    }
+
     Alert.alert(
       "Gruppe löschen",
       "Bist du sicher? Alle Verknüpfungen gehen verloren.",
@@ -137,6 +148,31 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
               showNotification("Gelöscht", "Gruppe wurde entfernt.");
             } catch (e) {
               Alert.alert("Fehler", "Löschen fehlgeschlagen.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleLeaveFamily = async (id: string) => {
+    Alert.alert(
+      "Gruppe verlassen",
+      "Möchtest du diese Gruppe wirklich verlassen?",
+      [
+        { text: "Abbrechen", style: "cancel" },
+        {
+          text: "Verlassen",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              if (user) {
+                await supabaseService.removeFamilyMember(id, user.id);
+                setSelectedFamily(null);
+                showNotification("Verlassen", "Du hast die Gruppe verlassen.");
+              }
+            } catch (e) {
+              Alert.alert("Fehler", "Verlassen fehlgeschlagen.");
             }
           }
         }
@@ -353,7 +389,11 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={() => setSelectedFamily(null)}><Icon name="close" size={24} color="#64748b" /></TouchableOpacity>
               <Text style={styles.modalTitle}>{selectedFamily.name}</Text>
-              <TouchableOpacity onPress={() => handleDeleteFamily(selectedFamily.id)}><Icon name="trash-outline" size={24} color="#ef4444" /></TouchableOpacity>
+              {user && selectedFamily.user_id === user.id ? (
+                <TouchableOpacity onPress={() => handleDeleteFamily(selectedFamily.id)}><Icon name="trash-outline" size={24} color="#ef4444" /></TouchableOpacity>
+              ) : (
+                <TouchableOpacity onPress={() => handleLeaveFamily(selectedFamily.id)}><Icon name="exit-outline" size={24} color="#f59e0b" /></TouchableOpacity>
+              )}
             </View>
 
             <ScrollView contentContainerStyle={styles.modalContent}>

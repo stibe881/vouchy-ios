@@ -259,6 +259,11 @@ export const supabaseService = {
     if (error) throw error;
   },
 
+  removeFamilyMember: async (familyId: string, userId: string) => {
+    const { error } = await supabase.from('family_members').delete().eq('family_id', familyId).eq('user_id', userId);
+    if (error) throw error;
+  },
+
   getProfile: async (userId: string) => {
     if (!userId) return null;
     const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
