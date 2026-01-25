@@ -594,6 +594,15 @@ export const supabaseService = {
     return { data, error: null };
   },
 
+  rejectInvite: async (inviteId: string) => {
+    const { error } = await supabase
+      .from('family_invites')
+      .update({ status: 'rejected' })
+      .eq('id', inviteId);
+
+    if (error) throw error;
+  },
+
 
   // ===== TRIPS Integration =====
   getTrips: async (userId: string) => {
