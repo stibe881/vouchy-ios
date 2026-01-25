@@ -17,9 +17,10 @@ interface FamiliesViewProps {
   onDeleteAccount: () => void;
   showNotification: (title: string, body: string) => void;
   onRefreshInvites: () => void;
+  onRefreshData?: () => void;
 }
 
-const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvites, onUpdateUser, onCreateFamily, onUpdateFamily, onDeleteFamily, onLogout, onDeleteAccount, showNotification, onRefreshInvites }) => {
+const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvites, onUpdateUser, onCreateFamily, onUpdateFamily, onDeleteFamily, onLogout, onDeleteAccount, showNotification, onRefreshInvites, onRefreshData }) => {
   const [newFamilyName, setNewFamilyName] = useState('');
   const [isAddingFamily, setIsAddingFamily] = useState(false);
   const [selectedFamily, setSelectedFamily] = useState<Family | null>(null);
@@ -170,6 +171,7 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
                 await supabaseService.removeFamilyMember(id, user.id);
                 setSelectedFamily(null);
                 showNotification("Verlassen", "Du hast die Gruppe verlassen.");
+                if (onRefreshData) onRefreshData();
               }
             } catch (e) {
               Alert.alert("Fehler", "Verlassen fehlgeschlagen.");

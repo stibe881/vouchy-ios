@@ -326,6 +326,11 @@ const App: React.FC = () => {
                   loadAllUserData(auth.user.id);
                 }
               }}
+              onRefreshData={async () => {
+                if (auth.user?.id) {
+                  await loadAllUserData(auth.user.id);
+                }
+              }}
             />
           )}
           {view === 'detail' && selectedVoucher && (
