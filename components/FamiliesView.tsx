@@ -416,7 +416,7 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
               <View style={styles.memberList}>
                 <View style={styles.memberItem}>
                   <View style={styles.memberAvatar}><Text style={styles.memberAvatarText}>D</Text></View>
-                  <Text style={styles.memberName}>Du (Inhaber)</Text>
+                  <Text style={styles.memberName}>{user && selectedFamily.user_id === user.id ? 'Du (Inhaber)' : 'Du'}</Text>
                 </View>
                 {(selectedFamily.members || []).filter(m => m && m.id).map(member => (
                   <View key={member.id} style={styles.memberItem}>
