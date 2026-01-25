@@ -263,8 +263,28 @@ export const supabaseService = {
   },
 
   removeFamilyMember: async (familyId: string, userId: string) => {
-    const { error } = await supabase.from('family_members').delete().eq('family_id', familyId).eq('user_id', userId);
-    if (error) throw error;
+    // Get current family
+    const { data: family, error: fetchError } = await supabase
+      .from('families')
+      .select('members')
+      .eq('id', familyId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    // Remove user from members array
+    const updatedMembers = (family.members || []).filter((m: any) => m.id !== userId);
+
+    // Update family with new members array
+    const { error: updateError } = await supabase
+      .from('families')
+      .update({
+        members: updatedMembers,
+        member_count: updatedMembers.length + 1 // +1 for the owner
+      })
+      .eq('id', familyId);
+
+    if (updateError) throw updateError;
   },
 
   getProfile: async (userId: string) => {
