@@ -215,6 +215,46 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
     }
   };
 
+  const handleUpdateEmail = async () => {
+    if (!newEmail.trim() || !newEmail.includes('@')) {
+      Alert.alert("Fehler", "Bitte eine gültige E-Mail eingeben.");
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await supabaseService.updateEmail(newEmail.trim());
+      Alert.alert("Bestätigung gesendet", "Bitte bestätige die Änderung über den Link in deiner neuen E-Mail.");
+      setIsChangingEmail(false);
+    } catch (e: any) {
+      Alert.alert("Fehler", e.message || "E-Mail Änderung fehlgeschlagen.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdatePassword = async () => {
+    if (newPassword.length < 6) {
+      Alert.alert("Fehler", "Passwort muss mindestens 6 Zeichen haben.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      Alert.alert("Fehler", "Passwörter stimmen nicht überein.");
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await supabaseService.updatePassword(newPassword);
+      Alert.alert("Erfolg", "Dein Passwort wurde geändert.");
+      setNewPassword('');
+      setConfirmPassword('');
+      setIsChangingPassword(false);
+    } catch (e: any) {
+      Alert.alert("Fehler", e.message || "Passwort Änderung fehlgeschlagen.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
       <View style={styles.header}>
@@ -277,6 +317,23 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
           <Icon name={isChangingEmail ? "chevron-down-outline" : "chevron-forward-outline"} size={16} color="#d1d5db" />
         </TouchableOpacity>
 
+        {isChangingEmail && (
+          <View style={styles.settingContent}>
+            <Text style={styles.inputLabel}>Neue E-Mail Adresse</Text>
+            <TextInput
+              style={styles.input}
+              value={newEmail}
+              onChangeText={setNewEmail}
+              placeholder="neue@email.de"
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+            <TouchableOpacity style={styles.primaryBtn} onPress={handleUpdateEmail} disabled={isLoading}>
+              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Speichern</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
+
         <TouchableOpacity style={styles.settingRow} onPress={() => setIsChangingPassword(!isChangingPassword)}>
           <View style={styles.settingLeft}>
             <View style={[styles.settingIcon, { backgroundColor: '#10b981' }]}><Icon name="lock-closed" size={16} color="#fff" /></View>
@@ -284,6 +341,30 @@ const FamiliesView: React.FC<FamiliesViewProps> = ({ families, user, pendingInvi
           </View>
           <Icon name={isChangingPassword ? "chevron-down-outline" : "chevron-forward-outline"} size={16} color="#d1d5db" />
         </TouchableOpacity>
+
+        {isChangingPassword && (
+          <View style={styles.settingContent}>
+            <Text style={styles.inputLabel}>Neues Passwort</Text>
+            <TextInput
+              style={styles.input}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+              placeholder="Mindestens 6 Zeichen"
+            />
+            <Text style={styles.inputLabel}>Bestätigen</Text>
+            <TextInput
+              style={styles.input}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              placeholder="Passwort wiederholen"
+            />
+            <TouchableOpacity style={styles.primaryBtn} onPress={handleUpdatePassword} disabled={isLoading}>
+              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Passwort ändern</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Pending Invitations Section */}
