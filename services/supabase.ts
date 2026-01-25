@@ -119,7 +119,7 @@ export const supabaseService = {
     const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
-    return (data || []) as Voucher[];
+    return ((data || []) as Voucher[]).filter(v => v && v.id);
   },
 
   saveVoucher: async (voucherData: any) => {
