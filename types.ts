@@ -14,6 +14,7 @@ export interface Redemption {
   amount: number;
   timestamp: string;
   user_name: string;
+  code_used?: string; // Track which code was used for code pool vouchers
 }
 
 export interface FamilyMember {
@@ -28,6 +29,13 @@ export interface Family {
   user_id: string;
   member_count: number;
   members?: FamilyMember[];
+}
+
+export interface CodePoolItem {
+  code: string;
+  used: boolean;
+  used_at?: string;
+  used_by?: string;
 }
 
 export interface Voucher {
@@ -51,6 +59,7 @@ export interface Voucher {
   image_url_2?: string | null;
   history?: Redemption[]; // Neu: Verlauf der Einlösungen
   trip_id?: number | null; // Verknüpfung zu einem Ausflug
+  code_pool?: CodePoolItem[]; // NEW: Multi-code support for quantity vouchers
 }
 
 export interface Trip {
